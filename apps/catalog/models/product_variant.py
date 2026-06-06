@@ -81,12 +81,6 @@ class ProductVariant(BaseModel):
         verbose_name = 'Вариант товара'
         verbose_name_plural = 'Варианты товара'
 
-        indexes = [
-            models.Index(fields=['sku']),
-            models.Index(fields=['is_active']),
-            models.Index(fields=['barcode']),
-            models.Index(fields=['product']),
-        ]
 
     def __str__(self):
         return self.sku

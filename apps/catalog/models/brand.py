@@ -1,5 +1,4 @@
 from django.db import models
-# from services.slug_service import generate_unique_slug
 from apps.catalog.services.slug_service import generate_unique_slug
 from apps.core.models import BaseModel
 

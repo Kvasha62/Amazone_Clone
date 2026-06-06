@@ -49,7 +49,7 @@ class ProductSerializer(serializers.ModelSerializer):
     )
 
     category_name = serializers.CharField(
-        source='category.full_name',
+        source='category.full_name_cached',
         read_only=True
     )
 

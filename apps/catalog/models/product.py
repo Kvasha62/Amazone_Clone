@@ -90,14 +90,7 @@ class Product(BaseModel):
         ordering = ('name',)
 
         indexes = [
-            models.Index(fields=['name']),
-            models.Index(fields=['slug']),
-            models.Index(fields=['brand']),
-            models.Index(fields=['category']),
-            models.Index(fields=['is_active']),
             models.Index(fields=['created_at']),
-            models.Index(fields=['rating']),
-            models.Index(fields=['manufacturer_code']),
         ]
 
     def __str__(self):
