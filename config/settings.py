@@ -87,7 +87,7 @@ WSGI_APPLICATION = "config.wsgi.application"
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'amazon_clone',
+        'NAME': 'amazone_clone',
         'USER': 'postgres',
         'PASSWORD': 'Postgres123!',
         'HOST': 'localhost',
