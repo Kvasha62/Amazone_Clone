@@ -1,6 +1,38 @@
+# ==============================================================================
+# apps/catalog/apps.py — Конфигурация приложения «catalog»
+# ==============================================================================
+
 from django.apps import AppConfig
 
 
 class CatalogConfig(AppConfig):
-    default_auto_field = "django.db.models.BigAutoField"
-    name = "apps.catalog"
+    """
+    Конфигурация каталога.
+
+    Django вызывает ready() после загрузки ВСЕХ моделей проекта.
+    Это единственное место где безопасно импортировать signals —
+    потому что к моменту ready() все модели уже зарегистрированы
+    в Django и signal'ы могут на них ссылаться.
+    """
+
+    # BigAutoField → BIGINT PK (подробно — см. apps/core/apps.py)
+    default_auto_field = 'django.db.models.BigAutoField'
+
+    # Python-путь к пакету. Должен совпадать с INSTALLED_APPS.
+    name = 'apps.catalog'
+
+    # Название в Django admin
+    verbose_name = 'Каталог'
+
+    def ready(self):
+        # ------------------------------------------------------------------
+        # Импортируем signals, чтобы Django зарегистрировал receivers.
+        #
+        # Если НЕ импортировать — @receiver-декораторы никогда не выполнятся,
+        # и signals НЕ сработают (main_image не обновится, search_vector
+        # не пересчитается). Это самая частая ошибка в Django-проектах.
+        #
+        # noqa: F401 — говорим линтеру «мы знаем, что импорт не используется
+        # напрямую; он нужен для побочного эффекта (регистрация signal'ов)».
+        # ------------------------------------------------------------------
+        import apps.catalog.signals  # noqa: F401
