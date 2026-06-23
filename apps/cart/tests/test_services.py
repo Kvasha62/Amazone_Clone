@@ -319,3 +319,4 @@ class MergeCartTests(CartTestCase):
         )
         self.assertEqual(user_cart.user, self.user2)
         self.assertTrue(user_cart.is_active)
+
