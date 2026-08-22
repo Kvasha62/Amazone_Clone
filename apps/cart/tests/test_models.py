@@ -129,7 +129,9 @@ class CartItemModelTests(CartTestCase):
 
     def test_quantity_max_boundary_valid(self):
         """MAX_ITEM_QUANTITY — валидное значение (граница)."""
-        item = self._add_item(self.cart, self.variant_a, quantity=MAX_ITEM_QUANTITY)
+        item = self._add_item(
+            self.cart, self.variant_a, quantity=MAX_ITEM_QUANTITY,
+        )
         self.assertEqual(item.quantity, MAX_ITEM_QUANTITY)
 
     def test_quantity_1_boundary_valid(self):
@@ -146,14 +148,28 @@ class CartItemModelTests(CartTestCase):
         self.assertIsNone(item.total_price)
 
     def test_unit_price_returns_price(self):
-        """Если у варианта нет цены — unit_price возвращает None."""
+        """Если у варианта есть цена — unit_price возвращает её."""
+        self._create_price(self.variant_a, price=Decimal('1500.00'))
         item = self._add_item(self.cart, self.variant_a)
-        self.assertIsNone(item.unit_price)
+        self.assertEqual(item.unit_price, Decimal('1500.00'))
 
     def test_total_price_calculation(self):
-        """total_price = unit_price * quantity. Без цены — None."""
+        """total_price = unit_price * quantity."""
+        self._create_price(self.variant_a, price=Decimal('1500.00'))
+        item = self._add_item(self.cart, self.variant_a, quantity=3)
+        self.assertEqual(item.total_price, Decimal('4500.00'))
+
+    def test_total_price_none_when_no_unit_price(self):
+        """Без цены — total_price = None."""
         item = self._add_item(self.cart, self.variant_a, quantity=3)
         self.assertIsNone(item.total_price)
+
+    def test_total_price_unsaved_item_no_crash(self):
+        """Несохранённый OrderItem не падает с TypeError."""
+        item = CartItem(cart=self.cart, variant=self.variant_a)
+        # unit_price=None, quantity=None → total_price не должен падать
+        total = item.total_price
+        self.assertIsNone(total)
 
     def test_str_representation(self):
         item = self._add_item(self.cart, self.variant_a, quantity=5)

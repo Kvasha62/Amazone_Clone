@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Как устроен интернет-магазин — Учебник</title>
+<style>
+@page {
+    size: A4;
+    margin: 2cm 2.5cm;
+    @bottom-center { content: counter(page); font-size: 10px; color: #888; }
+    @top-center { content: "Как устроен интернет-магазин"; font-size: 9px; color: #aaa; }
+}
+@page :first { @top-center { content: none; } @bottom-center { content: none; } }
+
+body {
+    font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.6;
+    color: #1a1a1a;
+}
+
+/* ===== COVER ===== */
+.cover {
+    page-break-after: always;
+    text-align: center;
+    padding-top: 6cm;
+}
+.cover h1 {
+    font-size: 32pt;
+    color: #131921;
+    margin-bottom: 0.3cm;
+}
+.cover h2 {
+    font-size: 16pt;
+    color: #ffa500;
+    font-weight: normal;
+    margin-bottom: 2cm;
+}
+.cover .subtitle {
+    font-size: 13pt;
+    color: #555;
+    margin-bottom: 3cm;
+}
+.cover .info {
+    font-size: 11pt;
+    color: #777;
+}
+
+/* ===== TOC ===== */
+.toc {
+    page-break-after: always;
+}
+.toc h2 {
+    font-size: 20pt;
+    border-bottom: 3px solid #ffa500;
+    padding-bottom: 8px;
+    margin-bottom: 20px;
+}
+.toc ul {
+    list-style: none;
+    padding-left: 0;
+}
+.toc > ul > li {
+    margin-bottom: 6px;
+    font-size: 12pt;
+    font-weight: bold;
+    color: #131921;
+}
+.toc > ul > li > ul > li {
+    font-weight: normal;
+    font-size: 11pt;
+    color: #333;
+    margin-bottom: 3px;
+    padding-left: 20px;
+}
+
+/* ===== HEADINGS ===== */
+h1 {
+    font-size: 24pt;
+    color: #131921;
+    border-bottom: 3px solid #ffa500;
+    padding-bottom: 6px;
+    margin-top: 1.5cm;
+    page-break-before: always;
+}
+h1:first-of-type { page-break-before: avoid; }
+
+h2 {
+    font-size: 16pt;
+    color: #232f3e;
+    margin-top: 0.8cm;
+    border-left: 4px solid #ffa500;
+    padding-left: 10px;
+}
+h3 {
+    font-size: 13pt;
+    color: #37475a;
+    margin-top: 0.5cm;
+}
+
+/* ===== ANALOGY BOX ===== */
+.analogy {
+    background: #fff8e1;
+    border-left: 5px solid #ffa500;
+    padding: 12px 16px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+}
+.analogy::before {
+    content: "💡 Аналогия: ";
+    font-weight: bold;
+    color: #e65100;
+}
+
+/* ===== TASK BOX ===== */
+.task {
+    background: #e8f5e9;
+    border-left: 5px solid #4caf50;
+    padding: 12px 16px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+}
+.task::before {
+    content: "🛠️ Задание: ";
+    font-weight: bold;
+    color: #2e7d32;
+}
+
+/* ===== KEY POINT ===== */
+.key {
+    background: #e3f2fd;
+    border-left: 5px solid #1976d2;
+    padding: 12px 16px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+}
+.key::before {
+    content: "📌 Запомни: ";
+    font-weight: bold;
+    color: #0d47a1;
+}
+
+/* ===== WARNING BOX ===== */
+.warning {
+    background: #fce4ec;
+    border-left: 5px solid #c62828;
+    padding: 12px 16px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+}
+.warning::before {
+    content: "⚠️ Важно: ";
+    font-weight: bold;
+    color: #b71c1c;
+}
+
+/* ===== CODE ===== */
+pre {
+    background: #263238;
+    color: #eeffff;
+    padding: 14px;
+    border-radius: 6px;
+    font-size: 9.5pt;
+    line-height: 1.4;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+    page-break-inside: avoid;
+}
+pre .comment { color: #546e7a; }
+pre .keyword { color: #c792ea; }
+pre .string { color: #c3e88d; }
+pre .function { color: #82aaff; }
+pre .decorator { color: #ffcb6b; }
+
+code {
+    background: #f5f5f5;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-size: 10pt;
+    font-family: 'Consolas', 'Courier New', monospace;
+}
+
+/* ===== TABLE ===== */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 10pt;
+    page-break-inside: avoid;
+}
+th {
+    background: #232f3e;
+    color: white;
+    padding: 8px 10px;
+    text-align: left;
+}
+td {
+    padding: 7px 10px;
+    border-bottom: 1px solid #ddd;
+}
+tr:nth-child(even) { background: #f9f9f9; }
+
+/* ===== DIAGRAM ===== */
+.diagram {
+    background: #fafafa;
+    border: 1px solid #ddd;
+    padding: 14px;
+    border-radius: 6px;
+    font-family: 'Consolas', monospace;
+    font-size: 9pt;
+    line-height: 1.3;
+    white-space: pre;
+    page-break-inside: avoid;
+    color: #333;
+}
+
+/* ===== FLOW ARROW ===== */
+.flow {
+    text-align: center;
+    font-size: 16pt;
+    color: #ffa500;
+    margin: 4px 0;
+}
+
+/* ===== LISTS ===== */
+ul, ol {
+    margin: 8px 0;
+    padding-left: 24px;
+}
+li { margin-bottom: 4px; }
+
+/* ===== MODULE CARD ===== */
+.module-card {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 10px 0;
+    page-break-inside: avoid;
+}
+.module-card .emoji { font-size: 20pt; }
+.module-card .name { font-size: 12pt; font-weight: bold; color: #131921; }
+.module-card .desc { font-size: 10pt; color: #555; }
+
+.pagebreak { page-break-before: always; }
+
+    /* ===== DOC LINKS ===== */
+    .doc-links {
+        background: #e3f2fd;
+        border: 1px solid #90caf9;
+        border-radius: 4px;
+        padding: 6px 12px;
+        margin: 8px 0 12px 0;
+        font-size: 9pt;
+        line-height: 1.6;
+        page-break-inside: avoid;
+    }
+    .doc-links-title {
+        font-weight: bold;
+        color: #1565c0;
+    }
+    .doc-link {
+        color: #1565c0;
+        text-decoration: none;
+        border-bottom: 1px dotted #1565c0;
+    }
+    .doc-link:hover {
+        color: #0d47a1;
+        border-bottom-style: solid;
+    }
+    /* TOC links */
+    .toc a {
+        color: inherit;
+        text-decoration: none;
+    }
+    .toc a:hover {
+        color: #ffa500;
+    }
+    </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- ОБЛОЖКА -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="cover">
+    <h1>🛒 Как устроен<br>интернет-магазин</h1>
+    <h2>Подробный учебник по проекту Amazone Clone</h2>
+    <div class="subtitle">
+        От «Что такое бэкенд?» до «Как 14 модулей работают вместе»<br><br>
+        898 тестов · 14 модулей · 1 полный путь покупки
+    </div>
+    <div class="info">
+        Django + Django REST Framework + PostgreSQL<br>
+        Для начинающих — объяснено с нуля
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- ОГЛАВЛЕНИЕ -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="toc">
+    <h2 id="oglavlenie">📖 Оглавление</h2>
+    <ul>
+        <li><a href="#chast-1-bazovye-ponyatiya" style="color:inherit;text-decoration:none;">ЧАСТЬ 1. Базовые понятия</a>
+        <ul>
+                <li><a href="#urok-1-bekend-i-frontend-dve-polovinki-sayta" style="color:inherit;text-decoration:none;">Урок 1. Бэкенд и фронтенд — две половинки сайта</a></li>
+                <li><a href="#urok-2-http-zaprosy-kak-brauzer-obshchaetsya-s-serverom" style="color:inherit;text-decoration:none;">Урок 2. HTTP-запросы — как браузер общается с сервером</a></li>
+                <li><a href="#urok-3-json-yazyk-obmena-dannymi" style="color:inherit;text-decoration:none;">Урок 3. JSON — язык обмена данными</a></li>
+                <li><a href="#urok-4-api-menyu-zaprosov-k-bekendu" style="color:inherit;text-decoration:none;">Урок 4. API — меню запросов к бэкенду</a></li>
+                <li><a href="#urok-5-baza-dannykh-sklad-informatsii" style="color:inherit;text-decoration:none;">Урок 5. База данных — склад информации</a></li>
+                <li><a href="#urok-6-django-konstruktor-dlya-saytov" style="color:inherit;text-decoration:none;">Урок 6. Django — конструктор для сайтов</a></li>
+                <li><a href="#urok-7-orm-perevodchik-python-sql" style="color:inherit;text-decoration:none;">Урок 7. ORM — переводчик Python ↔ SQL</a></li>
+                <li><a href="#urok-8-jwt-token-elektronnyy-pasport" style="color:inherit;text-decoration:none;">Урок 8. JWT-токен — электронный паспорт</a></li>
+            </ul>
+        </li>
+        <li><a href="#chast-2-kak-ustroen-proekt" style="color:inherit;text-decoration:none;">ЧАСТЬ 2. Как устроен проект</a>
+        <ul>
+                <li><a href="#urok-9-14-moduley-otdely-magazina" style="color:inherit;text-decoration:none;">Урок 9. 14 модулей — отделы магазина</a></li>
+                <li><a href="#urok-10-anatomiya-modulya-7-sloyov" style="color:inherit;text-decoration:none;">Урок 10. Анатомия модуля — 7 слоёв одного файла</a></li>
+                <li><a href="#urok-11-put-zaprosa-ot-knopki-do-bazy-i-obratno" style="color:inherit;text-decoration:none;">Урок 11. Путь запроса — от кнопки до базы и обратно</a></li>
+            </ul>
+        </li>
+        <li><a href="#chast-3-modeli-tablitsy-v-baze" style="color:inherit;text-decoration:none;">ЧАСТЬ 3. Модели — таблицы в базе</a>
+        <ul>
+                <li><a href="#urok-12-basemodel-obshchiy-predok" style="color:inherit;text-decoration:none;">Урок 12. BaseModel — общий предок</a></li>
+                <li><a href="#urok-13-polzovatel-model-user" style="color:inherit;text-decoration:none;">Урок 13. Пользователь — модель User</a></li>
+                <li><a href="#urok-14-tovar-model-product" style="color:inherit;text-decoration:none;">Урок 14. Товар — модель Product</a></li>
+                <li><a href="#urok-15-korzina-modeli-cart-i-cartitem" style="color:inherit;text-decoration:none;">Урок 15. Корзина — модели Cart и CartItem</a></li>
+                <li><a href="#urok-16-zakaz-model-order-i-statusnaya-mashina" style="color:inherit;text-decoration:none;">Урок 16. Заказ — модель Order и статусная машина</a></li>
+                <li><a href="#urok-17-foreignkey-constraints-indexes" style="color:inherit;text-decoration:none;">Урок 17. ForeignKey, Constraints, Indexes</a></li>
+            </ul>
+        </li>
+        <li><a href="#chast-4-servisy-mozg-proekta" style="color:inherit;text-decoration:none;">ЧАСТЬ 4. Сервисы — мозг проекта</a>
+        <ul>
+                <li><a href="#urok-18-service-layer-zachem-vynosit-logiku" style="color:inherit;text-decoration:none;">Урок 18. Service Layer — зачем выносить логику</a></li>
+                <li><a href="#urok-19-transactionatomic-vsyo-ili-nichego" style="color:inherit;text-decoration:none;">Урок 19. transaction.atomic — «Всё или ничего»</a></li>
+                <li><a href="#urok-20-select-for-update-zanyato-ne-trogay" style="color:inherit;text-decoration:none;">Урок 20. select_for_update — «Занято, не трогай!»</a></li>
+                <li><a href="#urok-21-cartservice-chitaem-realnyy-kod" style="color:inherit;text-decoration:none;">Урок 21. CartService — читаем реальный код</a></li>
+            </ul>
+        </li>
+        <li><a href="#chast-5-serializatory-views-url" style="color:inherit;text-decoration:none;">ЧАСТЬ 5. Сериализаторы, Views, URL</a>
+        <ul>
+                <li><a href="#urok-22-serializator-perevodchik-python-json" style="color:inherit;text-decoration:none;">Урок 22. Сериализатор — переводчик Python ↔ JSON</a></li>
+                <li><a href="#urok-23-view-priyomnaya-zaprosov" style="color:inherit;text-decoration:none;">Урок 23. View — приёмная запросов</a></li>
+                <li><a href="#urok-24-url-marshruty" style="color:inherit;text-decoration:none;">Урок 24. URL — маршруты</a></li>
+                <li><a href="#urok-25-permissions-kto-mozhet-chto" style="color:inherit;text-decoration:none;">Урок 25. Permissions — кто может что</a></li>
+            </ul>
+        </li>
+        <li><a href="#chast-6-kak-vsyo-rabotaet-vmeste" style="color:inherit;text-decoration:none;">ЧАСТЬ 6. Как всё работает вместе</a>
+        <ul>
+                <li><a href="#urok-26-polnyy-put-pokupki" style="color:inherit;text-decoration:none;">Урок 26. Полный путь покупки — от клика до доставки</a></li>
+                <li><a href="#urok-27-statusnaya-mashina-zakaza-podrobnee" style="color:inherit;text-decoration:none;">Урок 27. Статусная машина заказа</a></li>
+                <li><a href="#urok-28-signaly-avtodeystviya" style="color:inherit;text-decoration:none;">Урок 28. Сигналы — автодействия</a></li>
+                <li><a href="#urok-29-sliyanie-korzin-kogda-gost-loginitsya" style="color:inherit;text-decoration:none;">Урок 29. Слияние корзин — когда гость логинится</a></li>
+            </ul>
+        </li>
+        <li><a href="#chast-7-testy-i-migratsii" style="color:inherit;text-decoration:none;">ЧАСТЬ 7. Тесты и миграции</a>
+        <ul>
+                <li><a href="#urok-30-testy-898-avtomaticheskikh-proverok" style="color:inherit;text-decoration:none;">Урок 30. Тесты — 898 автоматических проверок</a></li>
+                <li><a href="#urok-31-migratsii-evolyutsiya-bazy-dannykh" style="color:inherit;text-decoration:none;">Урок 31. Миграции — эволюция базы данных</a></li>
+            </ul>
+        </li>
+        <li><a href="#chast-8-prakticheskie-zadaniya" style="color:inherit;text-decoration:none;">ЧАСТЬ 8. Практические задания</a></li>
+        <li><a href="#chast-9-slovar-terminov" style="color:inherit;text-decoration:none;">ЧАСТЬ 9. Словарь терминов</a></li>
+    </ul>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- ЧАСТЬ 1. БАЗОВЫЕ ПОНЯТИЯ -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h1 id="chast-1-bazovye-ponyatiya">ЧАСТЬ 1. Базовые понятия</h1>
+<p>Прежде чем лезть в код, нужно понять 8 вещей. Без них ничего не будет понятно. Не пропускай!</p>
+
+<h2 id="urok-1-bekend-i-frontend-dve-polovinki-sayta">Урок 1. Бэкенд и фронтенд — две половинки сайта</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/intro/overview/" target="_blank" class="doc-link">Django overview</a> &middot; <a href="https://react.dev/learn" target="_blank" class="doc-link">React: Quick Start</a>
+</div>
+<p>Когда ты открываешь ozon.ru или wildberries.ru, ты видишь красивые кнопки, картинки, анимации. Это <strong>фронтенд</strong> — программа, которая работает в твоём браузере.</p>
+<p>Но когда ты нажимаешь «Купить», браузер отправляет запрос на другой компьютер — <strong>сервер</strong>. Сервер — это <strong>бэкенд</strong>. Он:</p>
+<ul>
+    <li>Проверяет, есть ли товар на складе</li>
+    <li>Списывает деньги</li>
+    <li>Сохраняет заказ в базу данных</li>
+    <li>Отправляет email с подтверждением</li>
+</ul>
+
+<div class="diagram">
+┌──────────────┐    HTTP     ┌──────────────┐    SQL     ┌──────────────┐
+│   Браузер     │ ──────────► │   Сервер      │ ────────► │  База данных  │
+│  (фронтенд)   │ ◄────────── │  (бэкенд)     │ ◄──────── │  (PostgreSQL) │
+│   React       │    JSON     │   Django      │   данные  │   Таблицы     │
+└──────────────┘             └──────────────┘           └──────────────┘
+</div>
+
+<div class="analogy">Ресторан. Ты (фронтенд) сидишь за столиком и смотришь в меню. Официант (API) принимает заказ. Кухня (бэкенд) готовит. Склад (база данных) хранит продукты.</div>
+
+<div class="key">Наш проект — это бэкенд. Он НЕ рисует кнопки. Он только получает запросы и отдаёт данные в формате JSON.</div>
+
+<h2 id="urok-2-http-zaprosy-kak-brauzer-obshchaetsya-s-serverom">Урок 2. HTTP-запросы — как браузер общается с сервером</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://developer.mozilla.org/ru/docs/Web/HTTP" target="_blank" class="doc-link">MDN: HTTP</a> &middot; <a href="https://developer.mozilla.org/ru/docs/Web/HTTP/Methods" target="_blank" class="doc-link">HTTP методы</a>
+</div>
+<p>Браузер и сервер общаются через протокол <strong>HTTP</strong> (HyperText Transfer Protocol). Это как язык, на котором они разговаривают.</p>
+<p>Есть 4 основных типа запроса:</p>
+
+<table>
+    <tr><th>Тип</th><th>Что делает</th><th>Аналогия</th><th>Пример</th></tr>
+    <tr><td><code>GET</code></td><td>Получить данные</td><td>Посмотреть меню</td><td>Показать корзину</td></tr>
+    <tr><td><code>POST</code></td><td>Создать новые данные</td><td>Сделать заказ</td><td>Добавить товар в корзину</td></tr>
+    <tr><td><code>PATCH</code></td><td>Изменить существующие</td><td>Изменить блюдо</td><td>Поменять количество товара</td></tr>
+    <tr><td><code>DELETE</code></td><td>Удалить данные</td><td>Отменить заказ</td><td>Удалить товар из корзины</td></tr>
+</table>
+
+<p>Каждый HTTP-запрос получает <strong>ответ с кодом статуса</strong>:</p>
+<table>
+    <tr><th>Код</th><th>Что значит</th><th>Пример</th></tr>
+    <tr><td>200</td><td>Всё ок</td><td>Корзина загружена</td></tr>
+    <tr><td>201</td><td>Создано</td><td>Товар добавлен в корзину</td></tr>
+    <tr><td>400</td><td>Ошибка в запросе</td><td>Передали буквы вместо числа</td></tr>
+    <tr><td>401</td><td>Не авторизован</td><td>Нет JWT-токена</td></tr>
+    <tr><td>403</td><td>Доступ запрещён</td><td>Обычный юзер лезет в админку</td></tr>
+    <tr><td>404</td><td>Не найдено</td><td>Товар не существует</td></tr>
+    <tr><td>429</td><td>Слишком много запросов</td><td>Спамшь кнопку</td></tr>
+    <tr><td>500</td><td>Ошибка сервера</td><td>Баг в коде</td></tr>
+</table>
+
+<h2 id="urok-3-json-yazyk-obmena-dannymi">Урок 3. JSON — язык обмена данными</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://developer.mozilla.org/ru/docs/Web/JavaScript/Reference/Global_Objects/JSON" target="_blank" class="doc-link">MDN: JSON</a> &middot; <a href="https://json.org/json-ru.html" target="_blank" class="doc-link">json.org</a>
+</div>
+<p><strong>JSON</strong> (JavaScript Object Notation) — это формат, в котором бэкенд отдаёт данные фронтенду. Выглядит так:</p>
+<pre>{
+  "id": 1,
+  "name": "iPhone 15",
+  "price": 89990,
+  "in_stock": true,
+  "categories": ["Смартфоны", "Электроника"]
+}</pre>
+<p>Это просто текст с парами <strong>«ключ: значение»</strong>. Значения могут быть: число, строка (в кавычках), логическое (true/false), массив (в квадратных скобках), объект (в фигурных).</p>
+
+<div class="analogy">JSON — это язык, на котором фронтенд и бэкенд разговаривают между собой. Как английский для дипломатов — оба понимают.</div>
+
+<div class="task">Открой в браузере http://localhost:8000/api/v1/health/ — ты увидишь JSON-ответ: <code>{"status": "ok", "version": "1.0.0", "database": "ok"}</code></div>
+
+<h2 id="urok-4-api-menyu-zaprosov-k-bekendu">Урок 4. API — меню запросов к бэкенду</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://www.django-rest-framework.org/" target="_blank" class="doc-link">Django REST Framework</a> &middot; <a href="https://restfulapi.net/" target="_blank" class="doc-link">REST API</a>
+</div>
+<p><strong>API</strong> (Application Programming Interface) — это список всех запросов, которые можно сделать к бэкенду. Как меню в ресторане — ты не идёшь на кухню, ты выбираешь из списка.</p>
+
+<p>Наши основные API-эндпоинты:</p>
+<table>
+    <tr><th>Что хочешь</th><th>Метод</th><th>URL</th></tr>
+    <tr><td>Войти</td><td>POST</td><td><code>/api/v1/auth/login/</code></td></tr>
+    <tr><td>Зарегистрироваться</td><td>POST</td><td><code>/api/v1/auth/register/</code></td></tr>
+    <tr><td>Список товаров</td><td>GET</td><td><code>/api/v1/catalog/products/</code></td></tr>
+    <tr><td>Карточка товара</td><td>GET</td><td><code>/api/v1/catalog/products/iphone-15/</code></td></tr>
+    <tr><td>Показать корзину</td><td>GET</td><td><code>/api/v1/cart/</code></td></tr>
+    <tr><td>Добавить в корзину</td><td>POST</td><td><code>/api/v1/cart/items/</code></td></tr>
+    <tr><td>Оформить заказ</td><td>POST</td><td><code>/api/v1/orders/create/</code></td></tr>
+    <tr><td>Мои заказы</td><td>GET</td><td><code>/api/v1/orders/</code></td></tr>
+    <tr><td>Добавить в избранное</td><td>POST</td><td><code>/api/v1/wishlist/add/</code></td></tr>
+</table>
+
+<div class="task">Открой http://localhost:8000/api/v1/docs/ — это Swagger, интерактивная документация API. Можно кликать по эндпоинтам и выполнять запросы прямо из браузера!</div>
+
+<h2 id="urok-5-baza-dannykh-sklad-informatsii">Урок 5. База данных — склад информации</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/topics/db/models/" target="_blank" class="doc-link">Django Models</a>
+</div>
+<p><strong>База данных (БД)</strong> — это место, где хранятся ВСЕ данные магазина. Пользователи, товары, заказы, корзины — всё в таблицах. Как в Excel, но мощнее:</p>
+
+<div class="diagram">
+Таблица "users_user":                    Таблица "catalog_product":
+┌────┬──────────────────┬──────────┐     ┌────┬────────────┬─────────┐
+│ id │ email            │ username │     │ id │ name       │ rating  │
+├────┼──────────────────┼──────────┤     ├────┼────────────┼─────────┤
+│  1 │ ivan@example.com │ ivan     │     │  1 │ iPhone 15  │ 4.5     │
+│  2 │ maria@mail.ru    │ maria    │     │  2 │ MacBook    │ 4.8     │
+└────┴──────────────────┴──────────┘     └────┴────────────┴─────────┘
+</div>
+
+<p>Мы используем <strong>PostgreSQL</strong> — настоящую профессиональную базу данных. Она умеет:</p>
+<ul>
+    <li><strong>Транзакции</strong> — «всё или ничего» (подробнее в уроке 19)</li>
+    <li><strong>Блокировки</strong> — защита от одновременных изменений</li>
+    <li><strong>Индексы</strong> — ускорение поиска</li>
+    <li><strong>Полнотекстовый поиск</strong> — поиск по словам в описаниях</li>
+</ul>
+
+<div class="analogy">База данных — это склад магазина. Товары на полках, записи в журналах. Когда кассир пробивает товар — он ищет его на складе по штрих-коду (id).</div>
+
+<h2 id="urok-6-django-konstruktor-dlya-saytov">Урок 6. Django — конструктор для сайтов</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/intro/tutorial01/" target="_blank" class="doc-link">Django Tutorial</a> &middot; <a href="https://tutorial.djangogirls.org/ru/" target="_blank" class="doc-link">Django Girls</a>
+</div>
+<p><strong>Django</strong> (читается «Джа́нго») — это <em>фреймворк</em> на Python для создания сайтов.</p>
+
+<p><em>Фреймворк</em> — это «конструктор» для программиста. Вместо того чтобы писать всё с нуля (обработка запросов, база данных, авторизация), ты берёшь готовые детали и собираешь.</p>
+
+<p>Django предоставляет:</p>
+<table>
+    <tr><th>Компонент</th><th>Что делает</th><th>Аналогия</th></tr>
+    <tr><td><strong>ORM</strong></td><td>Работа с базой через Python</td><td>Переводчик</td></tr>
+    <tr><td><strong>Admin</strong></td><td>Готовая админка</td><td>Панель управления</td></tr>
+    <tr><td><strong>Auth</strong></td><td>Регистрация, логин, пароли</td><td>Охранник</td></tr>
+    <tr><td><strong>DRF</strong></td><td>Создание API (REST Framework)</td><td>Официант</td></tr>
+</table>
+
+<h2 id="urok-7-orm-perevodchik-python-sql">Урок 7. ORM — переводчик Python ↔ SQL</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/topics/db/queries/" target="_blank" class="doc-link">Django ORM Queries</a>
+</div>
+<p><strong>ORM</strong> (Object-Relational Mapping) — это способ работать с базой данных через Python-объекты, без написания SQL.</p>
+
+<p>Вместо:</p>
+<pre>SELECT * FROM catalog_product WHERE rating > 4.0 ORDER BY min_price;</pre>
+<p>Пишешь:</p>
+<pre>Product.objects.filter(rating__gt=4.0).order_by('min_price')</pre>
+
+<p>ORM сам переводит Python-код в SQL и отправляет в базу.</p>
+
+<div class="analogy">ORM — это переводчик. Ты говоришь по-русски, ORM переводит на SQL (язык базы данных).</div>
+
+<div class="key">Два подчёркивания <code>__</code> в ORM — это «особый вызов»: <code>__gt</code> = greater than, <code>__lt</code> = less than, <code>__icontains</code> = поиск без учёта регистра.</div>
+
+<h2 id="urok-8-jwt-token-elektronnyy-pasport">Урок 8. JWT-токен — электронный паспорт</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://django-rest-framework-simplejwt.readthedocs.io/" target="_blank" class="doc-link">SimpleJWT</a> &middot; <a href="https://jwt.io/" target="_blank" class="doc-link">jwt.io</a>
+</div>
+<p>Когда ты логинишься, бэкенд выдаёт тебе <strong>JWT-токен</strong> — длинную строку вроде паспорта:</p>
+<pre>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxfQ.abc123...</pre>
+
+<p>Этот токен фронтенд отправляет с каждым запросом, и бэкенд понимает: «А, это Иван!»</p>
+
+<p>Два токена:</p>
+<table>
+    <tr><th>Токен</th><th>Живёт</th><th>Зачем</th></tr>
+    <tr><td><strong>Access</strong></td><td>15 минут</td><td>Для обычных запросов</td></tr>
+    <tr><td><strong>Refresh</strong></td><td>7 дней</td><td>Получить новый access без повторного логина</td></tr>
+</table>
+
+<div class="analogy">JWT — это браслет в аквапарке. Показал на входе — пустили. Потерял — иди на кассу (логинься заново). Действует до конца дня (15 мин). Если просрочился — показываешь специальный талон (refresh) и получаешь новый браслет.</div>
+
+<div class="key">Токен хранится в <code>localStorage</code> в браузере и отправляется в заголовке <code>Authorization: Bearer &lt;токен&gt;</code> с каждым запросом.</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- ЧАСТЬ 2. КАК УСТРОЕН ПРОЕКТ -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h1 id="chast-2-kak-ustroen-proekt">ЧАСТЬ 2. Как устроен проект</h1>
+
+<h2 id="urok-9-14-moduley-otdely-magazina">Урок 9. 14 модулей — отделы магазина</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/ref/applications/" target="_blank" class="doc-link">Django Apps</a>
+</div>
+<p>Наш проект состоит из <strong>14 модулей</strong> (папок). Каждый модуль — это отдельная «деталь» магазина:</p>
+
+<div class="module-card"><span class="emoji">🏗️</span> <span class="name">core</span> — <span class="desc">Фундамент. BaseModel — общий предок всех моделей (created_at, updated_at)</span></div>
+<div class="module-card"><span class="emoji">👤</span> <span class="name">users</span> — <span class="desc">Пользователи. Регистрация, логин, профиль, адреса доставки</span></div>
+<div class="module-card"><span class="emoji">📦</span> <span class="name">catalog</span> — <span class="desc">Каталог. Товары, категории, бренды, теги, варианты, изображения</span></div>
+<div class="module-card"><span class="emoji">💰</span> <span class="name">pricing</span> — <span class="desc">Цены. Цена, скидочная цена, история изменений цен</span></div>
+<div class="module-card"><span class="emoji">🛒</span> <span class="name">cart</span> — <span class="desc">Корзина. Добавить, убрать, изменить количество, слить гостевую</span></div>
+<div class="module-card"><span class="emoji">📋</span> <span class="name">orders</span> — <span class="desc">Заказы. Оформить, отменить, статусы (PENDING → DELIVERED)</span></div>
+<div class="module-card"><span class="emoji">📊</span> <span class="name">inventory</span> — <span class="desc">Склад. Остатки, резервы, движения товаров</span></div>
+<div class="module-card"><span class="emoji">💳</span> <span class="name">payments</span> — <span class="desc">Оплата. Платежи, возвраты, вебхуки от платёжных систем</span></div>
+<div class="module-card"><span class="emoji">⭐</span> <span class="name">reviews</span> — <span class="desc">Отзывы. Рейтинг 1–5, текст, фото, подтверждённая покупка</span></div>
+<div class="module-card"><span class="emoji">🏷️</span> <span class="name">discounts</span> — <span class="desc">Скидки. Купоны, промокоды, кампании (% или фиксированная сумма)</span></div>
+<div class="module-card"><span class="emoji">🚚</span> <span class="name">shipping</span> — <span class="desc">Доставка. Зоны, методы, отслеживание посылок</span></div>
+<div class="module-card"><span class="emoji">❤️</span> <span class="name">wishlist</span> — <span class="desc">Избранное. Сохранить на потом, переместить в корзину</span></div>
+<div class="module-card"><span class="emoji">🔔</span> <span class="name">notifications</span> — <span class="desc">Уведомления. «Заказ отправлен», «Оплата прошла»</span></div>
+<div class="module-card"><span class="emoji">📈</span> <span class="name">analytics</span> — <span class="desc">Аналитика. Просмотры, продажи, конверсия, дашборд</span></div>
+
+<div class="analogy">Каждый модуль — это отдел в магазине. Отдел электроники, отдел одежды, касса, склад, бухгалтерия. Каждый делает свою работу, но все работают вместе.</div>
+
+<h2 id="urok-10-anatomiya-modulya-7-sloyov">Урок 10. Анатомия модуля — 7 слоёв</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://www.cosmicpython.com/book/chapter_02_repository.html" target="_blank" class="doc-link">Service Layer Pattern</a>
+</div>
+<p>Каждый модуль устроен одинаково. Возьмём для примера корзину (<code>apps/cart/</code>):</p>
+
+<table>
+    <tr><th>Папка/файл</th><th>Что делает</th><th>Аналогия</th></tr>
+    <tr><td><code>models/</code></td><td>Таблицы в базе данных</td><td>Полки на складе</td></tr>
+    <tr><td><code>services/</code></td><td>Бизнес-логика (мозг)</td><td>Кухня (готовит по рецепту)</td></tr>
+    <tr><td><code>serializers/</code></td><td>Переводят объекты в JSON и обратно</td><td>Таможня (проверяет и упаковывает)</td></tr>
+    <tr><td><code>api_views/</code></td><td>Принимают HTTP-запросы</td><td>Официант (принимает заказ)</td></tr>
+    <tr><td><code>urls.py</code></td><td>Маршруты (URL → View)</td><td>Таблички на дверях</td></tr>
+    <tr><td><code>tests/</code></td><td>Проверяют что всё работает</td><td>Техосмотр</td></tr>
+    <tr><td><code>migrations/</code></td><td>История изменений базы</td><td>Чертежи строительства</td></tr>
+</table>
+
+<h2 id="urok-11-put-zaprosa-ot-knopki-do-bazy-i-obratno">Урок 11. Путь запроса — от кнопки до базы и обратно</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/ref/request-response/" target="_blank" class="doc-link">Django Request/Response</a>
+</div>
+<p>Когда фронтенд отправляет <code>POST /api/v1/cart/items/ {variant_id: 5, quantity: 2}</code>:</p>
+
+<div class="diagram">
+1. URL:     /api/v1/cart/items/ → CartItemView          (api_views/)
+2. View:    Принимает запрос, вызывает сериализатор
+3. Serial:  Проверяет данные (variant_id есть? quantity > 0?)
+4. View:    Вызывает CartService.add_item()              (services/)
+5. Service: @transaction.atomic + select_for_update
+            Проверяет сток, ищет корзину, создаёт CartItem
+6. ORM:     INSERT INTO cart_cartitem (...)               (models/)
+7. Service: Возвращает обновлённую корзину
+8. View:    Отдаёт JSON-ответ                             (serializers/)
+</div>
+
+<div class="analogy">Как в ресторане: официант (URL) принимает заказ → проверяет бланк (Serializer) → передаёт на кухню (Service) → повар готовит по рецепту (бизнес-логика) → берёт продукты из холодильника (ORM → БД) → отдаёт блюдо через официанта (View → JSON).</div>
+
+<div class="key">Главное правило: <strong>View НЕ содержит бизнес-логику!</strong> View только принимает запрос, валидирует, вызывает сервис, возвращает ответ. Вся «умная» работа — в сервисе.</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- ЧАСТЬ 3. МОДЕЛИ -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h1 id="chast-3-modeli-tablitsy-v-baze">ЧАСТЬ 3. Модели — таблицы в базе</h1>
+
+<h2 id="urok-12-basemodel-obshchiy-predok">Урок 12. BaseModel — общий предок</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/topics/db/models/#abstract-base-classes" target="_blank" class="doc-link">Abstract base classes</a>
+</div>
+<p>У нас есть абстрактная модель <code>apps/core/models/base_model.py</code>:</p>
+<pre>class BaseModel(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)  # Один раз при создании
+    updated_at = models.DateTimeField(auto_now=True)      # Каждый раз при save()
+
+    class Meta:
+        abstract = True   # Django НЕ создаёт таблицу для BaseModel!</pre>
+
+<p>Все модели (кроме User) наследуют BaseModel → получают <code>created_at</code> и <code>updated_at</code> бесплатно.</p>
+
+<div class="analogy">BaseModel — как заготовка для паспорта. Все паспорта имеют страницу «Дата выдачи» и «Дата замены». Не нужно каждый раз рисовать эти страницы — они уже есть в шаблоне.</div>
+
+<div class="warning"><code>abstract = True</code> — критически важно! Без него Django создал бы отдельную таблицу core_basemodel, а все модели ссылались бы на неё через OneToOneField → лишние JOIN'ы → медленные запросы.</div>
+
+<h2 id="urok-13-polzovatel-model-user">Урок 13. Пользователь — модель User</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/topics/auth/customizing/" target="_blank" class="doc-link">Custom User model</a>
+</div>
+<p>Модель User — особенная: она наследует <strong>AbstractUser</strong> (не BaseModel!):</p>
+<pre>class User(AbstractUser):
+    phone = models.CharField(max_length=20, blank=True, default='')
+    email = models.EmailField(unique=True)  # Обязательный, уникальный!</pre>
+
+<p>AbstractUser уже даёт: username, email, first_name, last_name, is_active, is_staff, is_superuser, date_joined, password (хэшированный).</p>
+
+<p>Мы переопределили <code>email</code>: в стандартном AbstractUser он <code>blank=True</code> (необязательный), а мы сделали <code>unique=True</code> (обязательный, уникальный).</p>
+
+<div class="warning">User НЕ наследует BaseModel → у него НЕТ <code>created_at</code> и <code>updated_at</code>. Зато есть <code>date_joined</code> от AbstractUser.</div>
+
+<h2 id="urok-14-tovar-model-product">Урок 14. Товар — модель Product</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/ref/models/fields/#slugfield" target="_blank" class="doc-link">SlugField</a> &middot; <a href="https://django-treebeard.readthedocs.io/" target="_blank" class="doc-link">django-treebeard</a>
+</div>
+<p>Товар — центральная сущность магазина. Ключевые поля:</p>
+
+<pre>class Product(BaseModel):
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False)
+    slug = models.SlugField(unique=True)
+    name = models.CharField(max_length=500)
+    description = models.TextField(blank=True)
+    status = models.CharField(choices=ProductStatus.choices, default=ProductStatus.DRAFT)
+    brand = models.ForeignKey(Brand, on_delete=models.SET_NULL, null=True)
+    min_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    max_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
+    reviews_count = models.PositiveIntegerField(default=0)
+    views_count = models.PositiveIntegerField(default=0)</pre>
+
+<p><strong>Зачем uuid вместо id?</strong> Если показывать id=1, id=2, id=3 — конкурент узнает, сколько у тебя товаров. UUID непредсказуем.</p>
+<p><strong>Зачем slug?</strong> URL <code>/products/iphone-15/</code> красивее и лучше для SEO, чем <code>/products/550e8400-e29b/</code>.</p>
+<p><strong>Зачем min_price/max_price?</strong> Денормализованные цены — чтобы не делать JOIN к Price при каждом показе списка товаров.</p>
+
+<div class="key"><strong>Денормализация</strong> — когда мы храним копию данных в другой таблице для скорости. Например, min_price в Product — это копия минимальной цены из Price. При изменении цены нужно обновить и Product.min_price (через сигнал).</div>
+
+<h2 id="urok-15-korzina-modeli-cart-i-cartitem">Урок 15. Корзина — модели Cart и CartItem</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/ref/models/fields/#foreignkey" target="_blank" class="doc-link">ForeignKey</a>
+</div>
+<pre>class Cart(BaseModel):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True)
+    session_key_hash = models.CharField(max_length=64, null=True)
+    is_active = models.BooleanField(default=True)</pre>
+
+<p>Два типа владельца:</p>
+<ul>
+    <li><strong>Авторизованный</strong>: <code>user</code> заполнен, <code>session_key_hash</code> = NULL</li>
+    <li><strong>Гость</strong>: <code>user</code> = NULL, <code>session_key_hash</code> = SHA-256 хэш ключа сессии</li>
+</ul>
+
+<div class="warning">Почему хэш, а не оригинальный session_key? Если база утечёт — хакер получит хэши, но не сможет подставить их в cookie. SHA-256 необратим!</div>
+
+<pre>class CartItem(BaseModel):
+    cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name='items')
+    variant = models.ForeignKey(ProductVariant, on_delete=models.CASCADE)
+    quantity = models.PositiveIntegerField(default=1)</pre>
+
+<p>Один CartItem = одна позиция в корзине. <code>related_name='items'</code> позволяет писать <code>cart.items.all()</code>.</p>
+
+<h2 id="urok-16-zakaz-model-order-i-statusnaya-mashina">Урок 16. Заказ — модель Order и статусная машина</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://github.com/viewflow/django-fsm" target="_blank" class="doc-link">django-fsm</a>
+</div>
+<p>Заказ — одна из самых сложных моделей. Ключевые поля:</p>
+
+<pre>class Order(BaseModel):
+    status = models.CharField(choices=OrderStatus.choices, default=OrderStatus.PENDING)
+    user = models.ForeignKey(User, on_delete=models.PROTECT)
+    order_number = models.CharField(max_length=20, unique=True, editable=False)
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2)
+    delivery_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=12, decimal_places=2)</pre>
+
+<p>Статусы заказа (FSM — Finite State Machine, конечный автомат):</p>
+
+<div class="diagram">
+    PENDING (ожидает оплаты)
+       │
+       ▼
+    CONFIRMED (подтверждён)  ←─── оплата прошла
+       │
+       ▼
+    PROCESSING (в обработке) ←─── начали собирать
+       │
+       ▼
+    SHIPPED (отправлен)      ←─── передали в доставку
+       │
+       ▼
+    DELIVERED (доставлен)    ←─── клиент получил
+
+    На любом этапе → CANCELLED (отменён)
+</div>
+
+<p>Правила переходов зашифрованы в словаре:</p>
+<pre>ORDER_STATUS_TRANSITIONS = {
+    'PENDING':    ['CONFIRMED', 'CANCELLED'],
+    'CONFIRMED':  ['PROCESSING', 'CANCELLED'],
+    'PROCESSING': ['SHIPPED', 'CANCELLED'],
+    'SHIPPED':    ['DELIVERED', 'CANCELLED'],
+    'DELIVERED':  [],    # Терминальный — никуда больше
+    'CANCELLED':  [],    # Терминальный — никуда больше
+}</pre>
+
+<div class="key">Нельзя перескочить из PENDING сразу в SHIPPED — сервис не позволит. Это как уровни в игре: нельзя перейти на уровень 3, не пройдя уровень 2.</div>
+
+<p><strong>Адрес — SNAPSHOT (копия), не FK!</strong> Когда пользователь меняет адрес в профиле, данные заказа НЕ меняются. Это критично для чеков и возвратов.</p>
+
+<p><strong>DecimalField, не float!</strong> <code>0.1 + 0.2 = 0.30000000000000004</code> в float. Decimal считает точно до копейки.</p>
+
+<h2 id="urok-17-foreignkey-constraints-indexes">Урок 17. ForeignKey, Constraints, Indexes</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/ref/models/options/" target="_blank" class="doc-link">Model Meta options</a> &middot; <a href="https://docs.djangoproject.com/en/stable/ref/models/constraints/" target="_blank" class="doc-link">Constraints</a>
+</div>
+<h3 id="foreignkey-svyaz-mezhdu-tablitsami">ForeignKey — связь между таблицами</h3>
+<pre>CartItem.cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name='items')</pre>
+<p>Это значит: каждый CartItem привязан к ОДНОЙ корзине, а корзина имеет МНОГО items.</p>
+
+<div class="diagram">
+Cart #1 ←── CartItem (iPhone, 2 шт)
+         ←── CartItem (MacBook, 1 шт)
+
+Cart #2 ←── CartItem (AirPods, 3 шт)
+</div>
+
+<h3 id="constraints-pravila-v-baze">Constraints — правила в базе</h3>
+<pre>models.UniqueConstraint(
+    fields=['user'],
+    condition=Q(is_active=True) & Q(user__isnull=False),
+    name='unique_active_user_cart',
+)</pre>
+<p>Это правило: у одного пользователя — максимум ОДНА активная корзина. База данных сама это гарантирует.</p>
+
+<h3 id="indexes-uskorenie-poiska">Indexes — ускорение поиска</h3>
+<pre>models.Index(fields=['user', 'is_active'], name='cart_user_active_idx')</pre>
+<p>Индекс — как алфавитный указатель в книге. Без него поиск «все активные корзины пользователя» = перелистать ВСЮ книгу (Full Table Scan). С индексом — сразу на нужную страницу.</p>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- ЧАСТЬ 4. СЕРВИСЫ -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h1 id="chast-4-servisy-mozg-proekta">ЧАСТЬ 4. Сервисы — мозг проекта</h1>
+
+<h2 id="urok-18-service-layer-zachem-vynosit-logiku">Урок 18. Service Layer — зачем выносить логику</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://www.cosmicpython.com/book/chapter_02_repository.html" target="_blank" class="doc-link">Cosmic Python</a> &middot; <a href="https://docs.djangoproject.com/en/stable/topics/db/transactions/" target="_blank" class="doc-link">Django transactions</a>
+</div>
+<p><strong>Зачем сервисы отдельным слоем?</strong> Представь:</p>
+
+<div class="diagram">
+❌ БЕЗ сервисов (логика в View):
+    View сам проверяет сток, создаёт корзину,
+    считает цену, резервирует товар
+    → 200 строк в одном методе
+    → если нужно «создать заказ из CLI» — дублируем код
+
+✅ С СЕРВИСАМИ:
+    View: «CartService, добавь товар» — 3 строки
+    Service: проверяет сток, создаёт корзину,
+    считает цену — всё в одном месте
+    → View, CLI, management-команда используют один сервис
+</div>
+
+<div class="key">Правило: <strong>View → Serializer → Service → ORM</strong>. View не знает про транзакции. Serializer не знает про бизнес-логику. Service не знает про HTTP.</div>
+
+<h2 id="urok-19-transactionatomic-vsyo-ili-nichego">Урок 19. transaction.atomic — «Всё или ничего»</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/topics/db/transactions/#django.db.transaction.atomic" target="_blank" class="doc-link">atomic()</a>
+</div>
+<pre>@transaction.atomic
+def transfer_money(from_account, to_account, amount):
+    from_account.balance -= amount      # Шаг 1
+    from_account.save()
+    to_account.balance += amount        # Шаг 2
+    to_account.save()
+    # Если шаг 2 упал — шаг 1 тоже откатывается автоматически!</pre>
+
+<div class="analogy">transaction.atomic — как эскроу-счёт при покупке квартиры. Или деньги переведены покупателю, или квартира — продавцу. Не бывает «деньги списаны, а квартира не передана».</div>
+
+<h2 id="urok-20-select-for-update-zanyato-ne-trogay">Урок 20. select_for_update — «Занято, не трогай!»</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/ref/models/querysets/#select-for-update" target="_blank" class="doc-link">select_for_update()</a>
+</div>
+<pre>stock = Stock.objects.select_for_update().get(variant=variant)
+stock.quantity -= 1
+stock.save()</pre>
+
+<p>Пока мы держим <code>select_for_update()</code>, другой запрос НЕ может изменить эту строку. Это защищает от <strong>race condition</strong> — когда два человека одновременно покупают последний товар.</p>
+
+<div class="diagram">
+БЕЗ select_for_update:
+  Запрос A: stock.quantity = 1  ← видит 1
+  Запрос B: stock.quantity = 1  ← тоже видит 1
+  Запрос A: quantity -= 1 → 0  ← сохраняет 0
+  Запрос B: quantity -= 1 → 0  ← тоже сохраняет 0
+  Результат: продали 2 товара, а был только 1! ❌
+
+С select_for_update:
+  Запрос A: SELECT FOR UPDATE → quantity = 1 ← ЗАБЛОКИРОВАЛ
+  Запрос B: SELECT FOR UPDATE → ЖДЁТ...
+  Запрос A: quantity -= 1 → 0, COMMIT ← разблокировал
+  Запрос B: SELECT FOR UPDATE → quantity = 0 ← видит 0
+  Запрос B: ОШИБКА «Недостаточно на складе» ✅
+</div>
+
+<h2 id="urok-21-cartservice-chitaem-realnyy-kod">Урок 21. CartService — читаем реальный код</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/ref/models/expressions/#f-expressions" target="_blank" class="doc-link">F() expressions</a>
+</div>
+<p>Вот как выглядит добавление товара в корзину (упрощённо):</p>
+<pre>@staticmethod
+@transaction.atomic
+def add_item(cart, variant_id, quantity=1):
+    # Шаг 0: Базовая валидация
+    if quantity &lt; 1:
+        raise ValidationError('Количество должно быть ≥ 1')
+
+    # Шаг 1: Проверка лимита позиций
+    if cart.items.count() &gt;= 100:
+        raise ValidationError('Слишком много товаров в корзине')
+
+    # Шаг 2: Загрузка варианта с проверкой активности
+    variant = ProductVariant.objects.select_related('product', 'stock')\
+        .get(pk=variant_id, is_active=True)
+
+    # Шаг 3: Проверка что ТОВАР тоже активен
+    if variant.product.status != 'active':
+        raise NotFound('Товар недоступен для заказа.')
+
+    # Шаг 4: select_for_update — блокировка строки
+    existing = CartItem.objects.select_for_update()\
+        .filter(cart=cart, variant=variant).first()
+
+    # Шаг 5: Проверка остатков на складе
+    stock = getattr(variant, 'stock', None)
+    if stock and quantity > stock.quantity:
+        raise ValidationError('Недостаточно на складе')
+
+    # Шаг 6: Создание или обновление
+    if existing:
+        existing.quantity += quantity
+        existing.save()
+    else:
+        CartItem.objects.create(cart=cart, variant=variant, quantity=quantity)
+
+    return cart</pre>
+
+<p>6 шагов! Каждый — защита от определённой ошибки. Без любого из них — баг:</p>
+<table>
+    <tr><th>Шаг</th><th>Что проверяет</th><th>Что будет без него</th></tr>
+    <tr><td>0</td><td>quantity ≥ 1</td><td>Добавят -5 товаров</td></tr>
+    <tr><td>1</td><td>Лимит 100 позиций</td><td>100000 позиций → тормозит</td></tr>
+    <tr><td>2</td><td>Вариант активен</td><td>Купят удалённый товар</td></tr>
+    <tr><td>3</td><td>Товар активен</td><td>Купят черновик</td></tr>
+    <tr><td>4</td><td>select_for_update</td><td>Race condition — 2 позиции вместо 1</td></tr>
+    <tr><td>5</td><td>Остаток на складе</td><td>Продадят то, чего нет</td></tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- ЧАСТЬ 5. СЕРИАЛИЗАТОРЫ, VIEWS, URL -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h1 id="chast-5-serializatory-views-url">ЧАСТЬ 5. Сериализаторы, Views, URL</h1>
+
+<h2 id="urok-22-serializator-perevodchik-python-json">Урок 22. Сериализатор — переводчик Python ↔ JSON</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://www.django-rest-framework.org/api-guide/serializers/" target="_blank" class="doc-link">DRF Serializers</a>
+</div>
+<p>Сериализатор делает две вещи:</p>
+<ol>
+    <li><strong>Вход</strong>: проверяет данные из запроса (валидация)</li>
+    <li><strong>Выход</strong>: превращает Python-объект в JSON</li>
+</ol>
+
+<p>Пример входного сериализатора:</p>
+<pre>class AddToCartInputSerializer(serializers.Serializer):
+    variant_id = serializers.IntegerField(min_value=1)    # Обязательное, ≥ 1
+    quantity = serializers.IntegerField(min_value=1, default=1)  # Опциональное, по умолчанию 1</pre>
+
+<p>Если отправить <code>{"variant_id": "abc"}</code> → ошибка: «variant_id должен быть числом».</p>
+
+<p>Пример выходного сериализатора:</p>
+<pre>class CartItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CartItem
+        fields = ['id', 'product_name', 'sku', 'price', 'quantity', 'total_price']</pre>
+
+<p>Результат:</p>
+<pre>{
+    "id": 5,
+    "product_name": "iPhone 15",
+    "sku": "IP15-128-BLK",
+    "price": "89990.00",
+    "quantity": 2,
+    "total_price": "179980.00"
+}</pre>
+
+<div class="analogy">Сериализатор — таможенник. Проверяет багаж (данные) на входе и упаковывает товар (объект) для отправки на выходе.</div>
+
+<h2 id="urok-23-view-priyomnaya-zaprosov">Урок 23. View — приёмная запросов</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://www.django-rest-framework.org/api-guide/views/" target="_blank" class="doc-link">DRF APIView</a>
+</div>
+<p>View — это класс, который принимает HTTP-запрос и возвращает HTTP-ответ:</p>
+
+<pre>class CartItemView(APIView):
+    permission_classes = (AllowAny,)  # Любой может добавить в корзину
+
+    def post(self, request):
+        # 1. Валидируем входящие данные
+        input_ser = AddToCartInputSerializer(data=request.data)
+        input_ser.is_valid(raise_exception=True)
+
+        # 2. Получаем корзину (создаём если нет)
+        cart = CartService.get_or_create_cart(request)
+
+        # 3. Вызываем бизнес-логику
+        CartService.add_item(
+            cart=cart,
+            variant_id=input_ser.validated_data['variant_id'],
+            quantity=input_ser.validated_data.get('quantity', 1),
+        )
+
+        # 4. Возвращаем обновлённую корзину
+        return Response(CartSerializer(cart).data, status=201)</pre>
+
+<div class="key">View НЕ содержит бизнес-логику. Только 4 шага: принял → валидировал → вызвал сервис → вернул ответ.</div>
+
+<h2 id="urok-24-url-marshruty">Урок 24. URL — маршруты</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/topics/http/urls/" target="_blank" class="doc-link">Django URL dispatcher</a>
+</div>
+<p>URL-файл связывает адрес с View:</p>
+<pre>urlpatterns = [
+    path('', CartView.as_view(), name='cart'),
+    path('items/', CartItemView.as_view(), name='cart-items'),
+    path('items/&lt;int:item_id&gt;/', CartItemDetailView.as_view()),
+    path('merge/', CartMergeView.as_view(), name='cart-merge'),
+]</pre>
+
+<p>В <code>config/urls.py</code> всё собирается: <code>path('api/v1/cart/', include('apps.cart.urls'))</code></p>
+<p>Итого полный URL: <code>/api/v1/cart/items/</code></p>
+
+<h2 id="urok-25-permissions-kto-mozhet-chto">Урок 25. Permissions — кто может что</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://www.django-rest-framework.org/api-guide/permissions/" target="_blank" class="doc-link">DRF Permissions</a>
+</div>
+<table>
+    <tr><th>Permission</th><th>Кто имеет доступ</th><th>Пример</th></tr>
+    <tr><td><code>AllowAny</code></td><td>Любой (даже без токена)</td><td>Каталог, корзина</td></tr>
+    <tr><td><code>IsAuthenticated</code></td><td>Только с JWT-токеном</td><td>Оформление заказа</td></tr>
+    <tr><td><code>IsAdminUser</code></td><td>Только админ (is_staff=True)</td><td>Аналитика</td></tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- ЧАСТЬ 6. КАК ВСЁ РАБОТАЕТ ВМЕСТЕ -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h1 id="chast-6-kak-vsyo-rabotaet-vmeste">ЧАСТЬ 6. Как всё работает вместе</h1>
+
+<h2 id="urok-26-polnyy-put-pokupki">Урок 26. Полный путь покупки</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://github.com/adamchainz/django-cors-headers" target="_blank" class="doc-link">django-cors-headers</a>
+</div>
+<p>Вот что происходит, когда пользователь покупает товар:</p>
+
+<div class="diagram">
+1. 👤 ПОЛЬЗОВАТЕЛЬ ЗАХОДИТ НА САЙТ
+   → users: Регистрация/Логин → JWT-токен
+
+2. 📦 ПРОСМАТРИВАЕТ КАТАЛОГ
+   → catalog: Список товаров, категории, бренды
+   → analytics: Записываем просмотр (record_view)
+
+3. 🛒 КЛАДЁТ В КОРЗИНУ
+   → cart: CartService.add_item()
+   → inventory: Проверяем остаток (stock.quantity)
+
+4. 📋 ОФОРМЛЯЕТ ЗАКАЗ
+   → orders: OrderService.create_from_cart()
+   → cart: Корзина деактивируется
+   → inventory: Статус CONFIRMED → резервируем товар
+   → discounts: Применяем купон если есть
+   → shipping: Рассчитываем стоимость доставки
+   → notifications: «Ваш заказ создан!»
+
+5. 💳 ОПЛАЧИВАЕТ
+   → payments: PaymentService.process()
+   → orders: Статус CONFIRMED → PROCESSING
+   → notifications: «Оплата прошла!»
+
+6. 🚚 ОТПРАВЛЯЕТСЯ
+   → shipping: Shipment → IN_TRANSIT
+   → orders: Статус PROCESSING → SHIPPED
+   → notifications: «Заказ отправлен!»
+
+7. 📦 ДОСТАВЛЯЕТСЯ
+   → shipping: Shipment → DELIVERED
+   → orders: Статус SHIPPED → DELIVERED
+   → inventory: Списываем со склада (commit)
+   → notifications: «Заказ доставлен!»
+
+8. ⭐ ОСТАВЛЯЕТ ОТЗЫВ
+   → reviews: ReviewService.create()
+   → catalog: Пересчитываем рейтинг товара
+</div>
+
+<h2 id="urok-27-statusnaya-mashina-zakaza-podrobnee">Урок 27. Статусная машина заказа (подробнее)</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://github.com/viewflow/django-fsm" target="_blank" class="doc-link">django-fsm</a>
+</div>
+<p>Статусная машина гарантирует, что заказ проходит через статусы по правилам. Сервис <code>OrderService.transition_status()</code> проверяет:</p>
+
+<pre>def transition_status(order, new_status):
+    allowed = ORDER_STATUS_TRANSITIONS.get(order.status, [])
+    if new_status not in allowed:
+        raise ValidationError(
+            f'Нельзя перейти из {order.status} в {new_status}'
+        )
+    order.status = new_status
+    order.save()</pre>
+
+<p>Это защищает от багов: никто не сможет «перепрыгнуть» статус или вернуть доставленный заказ обратно в обработку.</p>
+
+<h2 id="urok-28-signaly-avtodeystviya">Урок 28. Сигналы — автодействия</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/topics/signals/" target="_blank" class="doc-link">Django Signals</a>
+</div>
+<p>Сигнал — автоматическое действие при каком-то событии. Django сообщает: «Произошло X!» — и твой код реагирует.</p>
+
+<p>Пример: при создании пользователя автоматически создаём профиль:</p>
+<pre>@receiver(post_save, sender=User)
+def create_user_profile(sender, instance, created, **kwargs):
+    if created:
+        UserProfile.objects.create(user=instance)</pre>
+
+<p>Пример: при создании отзыва пересчитываем рейтинг товара:</p>
+<pre>@receiver(post_save, sender=Review)
+def recalculate_product_rating(sender, instance, **kwargs):
+    product = instance.product
+    reviews = Review.objects.filter(product=product, is_approved=True)
+    product.rating = reviews.aggregate(avg=Avg('rating'))['avg'] or 0
+    product.reviews_count = reviews.count()
+    product.save()</pre>
+
+<div class="analogy">Сигнал — как датчик дыма. Сработал → автоматически вызвал пожарных. Ты не звонишь сам — система реагирует сама.</div>
+
+<h2 id="urok-29-sliyanie-korzin-kogda-gost-loginitsya">Урок 29. Слияние корзин — когда гость логинится</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/topics/http/sessions/" target="_blank" class="doc-link">Session framework</a>
+</div>
+<p>Гость наполнил корзину. Потом залогинился. Что делать с гостевой корзиной? <strong>Слить</strong> её в пользовательскую!</p>
+
+<div class="diagram">
+Гостевая корзина:                     Пользовательская корзина:
+  iPhone 15 × 2                         MacBook × 1
+  AirPods × 1
+                                    РЕЗУЛЬТАТ СЛИЯНИЯ:
+                                      iPhone 15 × 2  ← из гостевой
+                                      MacBook × 1    ← было
+                                      AirPods × 1    ← из гостевой
+</div>
+
+<p>Алгоритм <code>CartService.merge_guest_into_user_cart()</code>:</p>
+<ol>
+    <li>Найти гостевую корзину по session_key_hash</li>
+    <li>Получить/создать корзину пользователя</li>
+    <li>Для каждой позиции гостевой корзины:
+        <ul>
+            <li>Проверить variant.is_active → пропустить неактивные</li>
+            <li>Если позиция уже есть в юзерской → сложить quantity</li>
+            <li>Иначе → создать новую позицию</li>
+            <li>Ограничить quantity доступным остатком (stock)</li>
+        </ul>
+    </li>
+    <li>Деактивировать гостевую корзину (НЕ удалять!)</li>
+</ol>
+
+<div class="warning">Гостевую корзину мы ДЕАКТИВИРУЕМ, а не удаляем — для аналитики (сколько корзин было слито) и восстановления.</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- ЧАСТЬ 7. ТЕСТЫ И МИГРАЦИИ -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h1 id="chast-7-testy-i-migratsii">ЧАСТЬ 7. Тесты и миграции</h1>
+
+<h2 id="urok-30-testy-898-avtomaticheskikh-proverok">Урок 30. Тесты — 898 автоматических проверок</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/topics/testing/" target="_blank" class="doc-link">Django Testing</a> &middot; <a href="https://www.django-rest-framework.org/api-guide/testing/" target="_blank" class="doc-link">DRF Testing</a>
+</div>
+<p>Тесты проверяют, что код работает правильно. У нас <strong>898 тестов</strong> — и все проходят!</p>
+
+<pre>class CartServiceTests(TestCase):
+    def test_add_item(self):
+        """Добавление товара в корзину."""
+        cart = self._create_cart()
+        CartService.add_item(cart=cart, variant_id=self.variant.pk, quantity=2)
+        self.assertEqual(cart.items.count(), 1)         # 1 позиция
+        self.assertEqual(cart.items.first().quantity, 2) # количество = 2
+
+    def test_add_same_item_increments(self):
+        """Повторное добавление увеличивает количество."""
+        cart = self._create_cart()
+        CartService.add_item(cart=cart, variant_id=self.variant.pk, quantity=1)
+        CartService.add_item(cart=cart, variant_id=self.variant.pk, quantity=3)
+        self.assertEqual(cart.items.count(), 1)         # всё ещё 1 позиция
+        self.assertEqual(cart.items.first().quantity, 4) # 1 + 3 = 4</pre>
+
+<div class="analogy">Тесты — как техосмотр автомобиля. Перед выездом на дорогу проверяем: тормоза работают? фары горят? руль крутится? Если хоть одна проверка не прошла — на дорогу нельзя.</div>
+
+<p>Запуск:</p>
+<pre>python manage.py test            # Все 898 тестов
+python manage.py test apps.cart  # Только корзину
+python manage.py test apps.orders.tests.test_services  # Только сервисы заказов</pre>
+
+<h2 id="urok-31-migratsii-evolyutsiya-bazy-dannykh">Урок 31. Миграции — эволюция базы данных</h2>
+<div class="doc-links">
+<span class="doc-links-title">[DOC]</span> <a href="https://docs.djangoproject.com/en/stable/topics/migrations/" target="_blank" class="doc-link">Django Migrations</a>
+</div>
+<p>Миграция — это инструкция «как изменить базу данных». Как коммиты в Git, но для структуры таблиц.</p>
+
+<pre># 0001_initial.py — создаёт таблицу
+operations = [
+    migrations.CreateModel(
+        name='Cart',
+        fields=[
+            ('id', models.BigAutoField(primary_key=True)),
+            ('user', models.ForeignKey(...)),
+            ('is_active', models.BooleanField(default=True)),
+        ],
+    ),
+]</pre>
+
+<p>Команды:</p>
+<pre>python manage.py makemigrations  # Модель → SQL (создать миграцию)
+python manage.py migrate         # Выполнить SQL (применить миграцию)</pre>
+
+<div class="analogy">Миграции — как строительные чертежи. Сначала «Фундамент» (0001), потом «Стены» (0002), потом «Крыша» (0003). Нельзя построить крышу без стен!</div>
+
+<div class="warning">Никогда не удаляй миграции, которые уже применены на сервере! Это как сжечь чертежи, когда дом уже построен. Если нужно откатить — используй <code>python manage.py migrate app_name migration_number</code>.</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- ЧАСТЬ 8. ПРАКТИЧЕСКИЕ ЗАДАНИЯ -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h1 id="chast-8-prakticheskie-zadaniya">ЧАСТЬ 8. Практические задания</h1>
+
+<h3 id="zadanie-1-sozday-tovar-cherez-django-admin">🛠️ Задание 1: Создай товар через Django Admin</h3>
+<ol>
+    <li>Запусти сервер: <code>python manage.py runserver</code></li>
+    <li>Открой http://localhost:8000/admin/</li>
+    <li>Залогинься (создай superuser: <code>python manage.py createsuperuser</code>)</li>
+    <li>Создай бренд, категорию, товар, вариант товара</li>
+</ol>
+<p><strong>Что ты поймёшь:</strong> Как данные попадают в базу через админку.</p>
+
+<h3 id="zadanie-2-poluchi-dannye-cherez-api">🛠️ Задание 2: Получи данные через API</h3>
+<ol>
+    <li>Залогинься через API (curl или Postman)</li>
+    <li>Скопируй access-токен</li>
+    <li>Получи список товаров: <code>GET /api/v1/catalog/products/</code></li>
+</ol>
+<p><strong>Что ты поймёшь:</strong> Как фронтенд общается с бэкендом.</p>
+
+<h3 id="zadanie-3-dobav-tovar-v-korzinu-cherez-api">🛠️ Задание 3: Добавь товар в корзину через API</h3>
+<pre>POST /api/v1/cart/items/
+Authorization: Bearer &lt;токен&gt;
+{"variant_id": 1, "quantity": 2}</pre>
+<p>Потом посмотри корзину: <code>GET /api/v1/cart/</code></p>
+
+<h3 id="zadanie-4-napishi-svoy-test">🛠️ Задание 4: Напиши свой тест</h3>
+<p>Добавь в <code>apps/cart/tests/test_services.py</code>:</p>
+<pre>def test_add_item_quantity_zero_raises_error(self):
+    """Нельзя добавить 0 товаров."""
+    cart = self._create_cart()
+    with self.assertRaises(ValidationError):
+        CartService.add_item(
+            cart=cart,
+            variant_id=self.variant_a.pk,
+            quantity=0,
+        )</pre>
+<p>Запусти: <code>python manage.py test apps.cart</code></p>
+
+<h3 id="zadanie-5-prochitay-kod-modulya-wishlist">🛠️ Задание 5: Прочитай код модуля wishlist</h3>
+<p>Выбери модуль <code>apps/wishlist/</code> (он маленький) и прочти ВСЕ файлы по порядку:</p>
+<ol>
+    <li><code>models/wishlist.py</code> — какие поля?</li>
+    <li><code>services/wishlist_service.py</code> — какие методы?</li>
+    <li><code>serializers/wishlist_serializers.py</code> — какие поля в JSON?</li>
+    <li><code>api_views/wishlist_views.py</code> — какие URL?</li>
+    <li><code>urls.py</code> — какие маршруты?</li>
+    <li><code>tests/test_services.py</code> — какие проверки?</li>
+</ol>
+
+<h3 id="zadanie-6-narisuy-put-zakaza">🛠️ Задание 6: Нарисуй путь заказа</h3>
+<p>Нарисуй на бумаге полный путь покупки (урок 26). Подпиши, какой модуль за что отвечает. Попробуй объяснить вслух.</p>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- ЧАСТЬ 9. СЛОВАРЬ -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h1 id="chast-9-slovar-terminov">ЧАСТЬ 9. Словарь терминов</h1>
+
+<table>
+    <tr><th>Термин</th><th>Простыми словами</th></tr>
+    <tr><td><strong>Бэкенд</strong></td><td>Программа на сервере (не видна пользователю)</td></tr>
+    <tr><td><strong>Фронтенд</strong></td><td>Программа в браузере (кнопки, картинки)</td></tr>
+    <tr><td><strong>API</strong></td><td>Меню запросов к бэкенду</td></tr>
+    <tr><td><strong>JSON</strong></td><td>Формат данных (текст с ключами и значениями)</td></tr>
+    <tr><td><strong>HTTP</strong></td><td>Протокол общения браузера и сервера</td></tr>
+    <tr><td><strong>ORM</strong></td><td>Переводчик Python ↔ SQL</td></tr>
+    <tr><td><strong>Модель</strong></td><td>Таблица в базе данных</td></tr>
+    <tr><td><strong>ForeignKey</strong></td><td>Ссылка на другую таблицу</td></tr>
+    <tr><td><strong>Сериализатор</strong></td><td>Переводчик Python-объект ↔ JSON</td></tr>
+    <tr><td><strong>View</strong></td><td>Обработчик HTTP-запроса</td></tr>
+    <tr><td><strong>Сервис</strong></td><td>Бизнес-логика (мозг)</td></tr>
+    <tr><td><strong>Migration</strong></td><td>Инструкция по изменению базы</td></tr>
+    <tr><td><strong>Тест</strong></td><td>Автоматическая проверка кода</td></tr>
+    <tr><td><strong>JWT</strong></td><td>Электронный паспорт пользователя</td></tr>
+    <tr><td><strong>Transaction</strong></td><td>«Всё или ничего» — группа операций</td></tr>
+    <tr><td><strong>select_for_update</strong></td><td>«Занято, не трогай!» — блокировка строки</td></tr>
+    <tr><td><strong>Signal</strong></td><td>Автодействие при событии</td></tr>
+    <tr><td><strong>Constraint</strong></td><td>Правило в базе (уникальность, проверка)</td></tr>
+    <tr><td><strong>Index</strong></td><td>Ускорение поиска (как алфавитный указатель)</td></tr>
+    <tr><td><strong>FSM</strong></td><td>Конечный автомат (статусная машина)</td></tr>
+    <tr><td><strong>CORS</strong></td><td>Разрешение для фронтенда делать запросы</td></tr>
+    <tr><td><strong>Throttle</strong></td><td>Ограничение количества запросов</td></tr>
+    <tr><td><strong>Denormalization</strong></td><td>Копия данных для скорости</td></tr>
+    <tr><td><strong>Race condition</strong></td><td>Баг при одновременных запросах</td></tr>
+    <tr><td><strong>IDOR</strong></td><td>Уязвимость: доступ к чужим данным по ID</td></tr>
+    <tr><td><strong>Snapshot</strong></td><td>Замороженная копия данных (адрес в заказе)</td></tr>
+</table>
+
+</body>
+</html>

@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Catalog Reference — Django + DRF</title>
+<style>
+@page { size: A4; margin: 2cm 2.2cm; @bottom-center { content: counter(page); font-size: 10px; color: #888; } @top-center { content: "Catalog Reference"; font-size: 9px; color: #aaa; } }
+@page :first { @top-center { content: none; } @bottom-center { content: none; } }
+body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10.5pt; line-height: 1.6; color: #1a1a1a; }
+h1 { font-size: 20pt; color: #131921; border-bottom: 3px solid #ffa500; padding-bottom: 6px; margin-top: 28px; page-break-after: avoid; }
+h2 { font-size: 15pt; color: #232f3e; border-left: 4px solid #ffa500; padding-left: 10px; margin-top: 22px; page-break-after: avoid; }
+h3 { font-size: 12pt; color: #37475a; margin-top: 16px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; color: #555; margin-top: 12px; }
+pre { background: #f4f4f4; border: 1px solid #ddd; border-left: 4px solid #ffa500; border-radius: 4px; padding: 10px 14px; font-size: 8.5pt; line-height: 1.45; overflow-x: auto; page-break-inside: avoid; margin: 8px 0; }
+code { font-family: 'Fira Code', Consolas, monospace; font-size: 8.5pt; }
+p code, li code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-size: 8.5pt; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 9pt; page-break-inside: avoid; }
+th { background: #131921; color: white; padding: 7px 10px; text-align: left; }
+td { padding: 5px 10px; border-bottom: 1px solid #eee; }
+tr:nth-child(even) td { background: #f9f9f9; }
+.sig { background: #e8f5e9; border-left: 4px solid #4caf50; border-radius: 6px; padding: 10px 14px; margin: 12px 0; font-family: 'Fira Code', Consolas, monospace; font-size: 9pt; page-break-inside: avoid; }
+.doc-box { background: #e3f2fd; border: 1px solid #90caf9; border-radius: 4px; padding: 6px 12px; margin: 8px 0; font-size: 9pt; page-break-inside: avoid; }
+.doc-box a { color: #1565c0; text-decoration: none; border-bottom: 1px dotted #1565c0; }
+.callout { border-radius: 6px; padding: 10px 14px; margin: 10px 0; page-break-inside: avoid; }
+.callout-tip { background: #e8f5e9; border-left: 4px solid #4caf50; }
+.callout-warning { background: #fff3e0; border-left: 4px solid #ff9800; }
+.callout-danger { background: #fce4ec; border-left: 4px solid #f44336; }
+.callout-title { font-weight: bold; margin-bottom: 3px; }
+.toc { page-break-after: always; }
+.toc h2 { font-size: 18pt; border-bottom: 3px solid #ffa500; }
+.toc ul { list-style: none; padding: 0; }
+.toc > ul > li { margin-bottom: 5px; font-weight: bold; font-size: 10.5pt; color: #131921; border-bottom: 1px dotted #ddd; padding-bottom: 3px; }
+.toc > ul > li > ul { list-style: none; padding-left: 18px; margin-top: 3px; }
+.toc > ul > li > ul > li { font-weight: normal; font-size: 9.5pt; color: #444; margin-bottom: 1px; border-bottom: none; }
+.toc a { color: inherit; text-decoration: none; }
+.toc a:hover { color: #ffa500; }
+.cover { page-break-after: always; text-align: center; padding-top: 5cm; }
+.cover h1 { font-size: 28pt; border: none; }
+.cover h2 { font-size: 14pt; color: #ffa500; font-weight: normal; border: none; padding: 0; }
+.cover .info { font-size: 10pt; color: #777; margin-top: 3cm; }
+
+/* ===== Anchor styles ===== */
+.anchor { color: #ffa500; text-decoration: none; font-size: 0.65em; vertical-align: super; margin-left: 6px; opacity: 0; transition: opacity 0.2s; user-select: none; }
+h1:hover .anchor, h2:hover .anchor, h3:hover .anchor, h4:hover .anchor { opacity: 1; }
+.anchor:hover { color: #e69500; text-decoration: underline; }
+
+/* Jump-target highlight */
+:target { background: #fff3e0; border-radius: 4px; }
+h1:target, h2:target, h3:target, h4:target { background: #fff8e1; padding-left: 4px; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+<h1>Справочник методов и классов<br>приложения <code>catalog</code></h1>
+<h2>Django + DRF — Amazon Clone</h2>
+<div class="info">Версия 1.0 · Июнь 2026<br>10 моделей · 2 сервисa · 1 queryset · 9 сериализаторов · 8 views<br>Ссылки на официальную документацию Django / DRF / treebeard</div>
+</div>
+
+<div class="toc">
+<h2>Содержание</h2>
+<ul>
+<li><a href="#s1-modeli">1. Модели</a>
+  <ul>
+    <li><a href="#s1-1-product">1.1 Product</a></li>
+    <li><a href="#s1-2-productvariant">1.2 ProductVariant</a></li>
+    <li><a href="#s1-3-productimage">1.3 ProductImage</a></li>
+    <li><a href="#s1-4-brand">1.4 Brand</a></li>
+    <li><a href="#s1-5-category">1.5 Category (treebeard)</a></li>
+    <li><a href="#s1-6-tag">1.6 Tag</a></li>
+    <li><a href="#s1-7-eav">1.7 Attribute / AttributeValue / VariantAttribute (EAV)</a></li>
+  </ul>
+</li>
+<li><a href="#s2-konstanty">2. Константы (ProductStatus)</a></li>
+<li><a href="#s3-queryset">3. QuerySet (ProductQuerySet)</a></li>
+<li><a href="#s4-manager">4. Manager (ProductManager)</a></li>
+<li><a href="#s5-servisy">5. Сервисы</a>
+  <ul>
+    <li><a href="#s5-1-catalogservice">5.1 CatalogService</a></li>
+    <li><a href="#s5-2-slugservice">5.2 SlugService</a></li>
+  </ul>
+</li>
+<li><a href="#s6-serializatory">6. Сериализаторы</a>
+  <ul>
+    <li><a href="#s6-1-product-serializers">6.1 Product: List / Detail / Query / Input</a></li>
+    <li><a href="#s6-2-brand-serializers">6.2 Brand: List / Detail</a></li>
+    <li><a href="#s6-3-category-serializers">6.3 Category: Tree / Detail / Breadcrumb</a></li>
+    <li><a href="#s6-4-tag-serializer">6.4 Tag</a></li>
+  </ul>
+</li>
+<li><a href="#s7-views">7. Views (API-эндпоинты)</a>
+  <ul>
+    <li><a href="#s7-1-product-views">7.1 Product: List / Detail / Create / Update</a></li>
+    <li><a href="#s7-2-brand-views">7.2 Brand: List / Detail</a></li>
+    <li><a href="#s7-3-category-views">7.3 Category: Tree / Detail</a></li>
+  </ul>
+</li>
+<li><a href="#s8-signaly">8. Сигналы (signals.py)</a></li>
+<li><a href="#s9-admin">9. Admin</a></li>
+<li><a href="#s10-urls">10. URL-маршруты</a></li>
+<li><a href="#s-glossary">Приложение: Глоссарий</a></li>
+</ul>
+</div>
+
+<!-- ============================================================ -->
+<h1 id="s1-modeli">1. Модели <a class="anchor" href="#s1-modeli" title="Ссылка на этот раздел">§</a></h1>
+<!-- ============================================================ -->
+
+<h2 id="s1-1-product">1.1 Product <a class="anchor" href="#s1-1-product" title="Ссылка на этот раздел">§</a></h2>
+<p>Главная сущность каталога. Файл: <code>apps/catalog/models/product.py</code>.</p>
+
+<h3 id="s1-1-product-fields">Поля модели <a class="anchor" href="#s1-1-product-fields" title="Ссылка на этот раздел">§</a></h3>
+<table>
+<tr><th>Поле</th><th>Тип Django</th><th>Назначение</th></tr>
+<tr><td><code>uuid</code></td><td><code>UUIDField</code></td><td>Публичный ID для API (скрывает последовательный PK)</td></tr>
+<tr><td><code>name</code></td><td><code>CharField(255, db_index)</code></td><td>Название товара, индекс для точного поиска</td></tr>
+<tr><td><code>slug</code></td><td><code>SlugField(unique, blank)</code></td><td>SEO-URL, автогенерация один раз при создании</td></tr>
+<tr><td><code>description</code></td><td><code>TextField(blank)</code></td><td>Полное описание товара</td></tr>
+<tr><td><code>search_vector</code></td><td><code>SearchVectorField(null)</code></td><td>PostgreSQL полнотекстовый поиск (tsvector + GIN)</td></tr>
+<tr><td><code>meta_title</code></td><td><code>CharField(255, blank)</code></td><td>SEO &lt;title&gt;</td></tr>
+<tr><td><code>meta_description</code></td><td><code>TextField(blank)</code></td><td>SEO &lt;meta description&gt;</td></tr>
+<tr><td><code>manufacturer_code</code></td><td><code>CharField(100, db_index)</code></td><td>Артикул производителя</td></tr>
+<tr><td><code>status</code></td><td><code>CharField(choices, db_index)</code></td><td>DRAFT / ACTIVE / OUT_OF_STOCK / ARCHIVED</td></tr>
+<tr><td><code>is_featured</code></td><td><code>BooleanField(db_index)</code></td><td>Рекомендуемый товар</td></tr>
+<tr><td><code>published_at</code></td><td><code>DateTimeField(db_index)</code></td><td>Дата/время публикации (отложенная публикация)</td></tr>
+<tr><td><code>brand</code></td><td><code>FK(Brand, PROTECT)</code></td><td>Бренд товара. PROTECT — нельзя удалить бренд с товарами</td></tr>
+<tr><td><code>categories</code></td><td><code>M2M(Category)</code></td><td>Категории (M2M — товар в нескольких)</td></tr>
+<tr><td><code>primary_category</code></td><td><code>FK(Category, PROTECT)</code></td><td>Главная категория (для breadcrumbs + canonical URL)</td></tr>
+<tr><td><code>tags</code></td><td><code>M2M(Tag)</code></td><td>Теги товара</td></tr>
+<tr><td><code>main_image</code></td><td><code>FK(ProductImage, null)</code></td><td>Денормализованная ссылка на главное изображение</td></tr>
+<tr><td><code>min_price</code></td><td><code>DecimalField(null, db_index)</code></td><td>Денормализованная мин. цена из вариантов</td></tr>
+<tr><td><code>max_price</code></td><td><code>DecimalField(null)</code></td><td>Денормализованная макс. цена из вариантов</td></tr>
+<tr><td><code>rating</code></td><td><code>DecimalField(3,2, db_index)</code></td><td>Средний рейтинг 0.00–5.00</td></tr>
+<tr><td><code>reviews_count</code></td><td><code>PositiveIntegerField</code></td><td>Количество отзывов</td></tr>
+<tr><td><code>views_count</code></td><td><code>PositiveBigIntegerField</code></td><td>Количество просмотров (64-bit)</td></tr>
+</table>
+
+<h3 id="s1-1-product-methods">Методы модели <a class="anchor" href="#s1-1-product-methods" title="Ссылка на этот раздел">§</a></h3>
+
+<div class="sig">save(self, *args, **kwargs) → None</div>
+<p>Генерирует <code>slug</code> при первом сохранении, устанавливает <code>published_at</code> при переходе в ACTIVE.</p>
+<div class="doc-box">[DOC] <a href="https://docs.djangoproject.com/en/stable/ref/models/instances/#django.db.models.Model.save">Model.save()</a> · <a href="https://docs.djangoproject.com/en/stable/ref/utils/#django.utils.text.slugify">slugify()</a></div>
+
+<div class="sig">increment_views(self) → None</div>
+<p>Атомарно +1 к <code>views_count</code> через <code>F()</code>. Без <code>F()</code> — race condition при параллельных запросах.</p>
+<pre><code>self.views_count = F('views_count') + 1
+self.save(update_fields=['views_count', 'updated_at'])
+self.refresh_from_db(fields=['views_count'])</code></pre>
+<div class="doc-box">[DOC] <a href="https://docs.djangoproject.com/en/stable/ref/models/expressions/#f-expressions">F() expressions</a> · <a href="https://docs.djangoproject.com/en/stable/ref/models/instances/#refresh-from-db">refresh_from_db()</a></div>
+
+<div class="sig">update_rating(self, new_rating: Decimal, total_reviews: int) → None</div>
+<p>Пересчитывает рейтинг и количество отзывов. Вызывается из ReviewService.</p>
+
+<div class="sig">recalculate_prices(self) → None</div>
+<p>Пересчитывает <code>min_price</code>/<code>max_price</code> из активных вариантов. Использует lazy-импорт для избежания циклов.</p>
+
+<h3 id="s1-1-product-properties">Свойства (@property) <a class="anchor" href="#s1-1-product-properties" title="Ссылка на этот раздел">§</a></h3>
+<table>
+<tr><th>Свойство</th><th>Тип</th><th>Описание</th></tr>
+<tr><td><code>is_active</code></td><td>bool</td><td><code>status == ProductStatus.ACTIVE</code></td></tr>
+<tr><td><code>is_visible</code></td><td>bool</td><td>ACTIVE + published_at в прошлом или NULL</td></tr>
+<tr><td><code>display_rating</code></td><td>str</td><td>Рейтинг для UI: «4.50»</td></tr>
+<tr><td><code>price_range</code></td><td>str</td><td>«1 299.00 — 3 499.00» или «Цена не указана»</td></tr>
+</table>
+
+<h3 id="s1-1-product-indexes">Meta-оптимизации <a class="anchor" href="#s1-1-product-indexes" title="Ссылка на этот раздел">§</a></h3>
+<p><strong>Partial indexes</strong> (условные индексы — только для ACTIVE товаров):</p>
+<ul>
+<li><code>product_active_category_idx</code> — (status, primary_category) WHERE status='active'</li>
+<li><code>product_active_brand_idx</code> — (status, brand) WHERE status='active'</li>
+<li><code>product_top_rating_idx</code> — (-rating) WHERE status='active'</li>
+<li><code>product_price_asc_idx</code> — (min_price) WHERE status='active'</li>
+<li><code>product_price_desc_idx</code> — (-max_price) WHERE status='active'</li>
+<li><code>product_newest_idx</code> — (-created_at) WHERE status='active'</li>
+<li><code>product_featured_idx</code> — (-created_at) WHERE status='active' AND is_featured=True</li>
+</ul>
+<p><strong>GIN index</strong>: <code>product_search_gin</code> на <code>search_vector</code></p>
+<p><strong>CheckConstraint</strong>: rating 0–5, счётчики ≥ 0, min_price ≥ 0, max_price ≥ min_price</p>
+<div class="doc-box">[DOC] <a href="https://docs.djangoproject.com/en/stable/ref/models/indexes/#conditional-indexes">Conditional (partial) indexes</a> · <a href="https://docs.djangoproject.com/en/stable/ref/models/constraints/#checkconstraint">CheckConstraint</a> · <a href="https://docs.djangoproject.com/en/stable/ref/contrib/postgres/indexes/#ginindex">GinIndex</a> · <a href="https://docs.djangoproject.com/en/stable/ref/contrib/postgres/search/#searchvectorfield">SearchVectorField</a></div>
+
+<!-- ============================================================ -->
+<h2 id="s1-2-productvariant">1.2 ProductVariant <a class="anchor" href="#s1-2-productvariant" title="Ссылка на этот раздел">§</a></h2>
+<p>Конкретное исполнение товара. Файл: <code>apps/catalog/models/product_variant.py</code>.</p>
+
+<table>
+<tr><th>Поле</th><th>Тип</th><th>Описание</th></tr>
+<tr><td><code>product</code></td><td>FK(Product, CASCADE)</td><td>Товар-владелец варианта</td></tr>
+<tr><td><code>sku</code></td><td>CharField(100, unique)</td><td>Складской артикул (IP15P-128-T)</td></tr>
+<tr><td><code>barcode</code></td><td>CharField(100, db_index)</td><td>Штрихкод EAN-13 / UPC-A</td></tr>
+<tr><td><code>is_active</code></td><td>BooleanField(db_index)</td><td>Видимость в каталоге</td></tr>
+<tr><td><code>length/width/height</code></td><td>DecimalField(validators, null)</td><td>Габариты для доставки</td></tr>
+<tr><td><code>weight</code></td><td>DecimalField(validators, null)</td><td>Вес для доставки</td></tr>
+<tr><td><code>slug</code></td><td>SlugField(unique, null)</td><td>URL варианта (опционально)</td></tr>
+</table>
+<p><strong>Index</strong>: <code>variant_product_active_idx</code> на (product, is_active)</p>
+<p><strong>save()</strong>: автогенерация slug из «{product.name}-{sku}»</p>
+<div class="doc-box">[DOC] <a href="https://docs.djangoproject.com/en/stable/ref/models/fields/#django.db.models.ForeignKey.on_delete">on_delete=CASCADE</a> · <a href="https://docs.djangoproject.com/en/stable/ref/validators/#minvaluevalidator">MinValueValidator</a></div>
+
+<!-- ============================================================ -->
+<h2 id="s1-3-productimage">1.3 ProductImage <a class="anchor" href="#s1-3-productimage" title="Ссылка на этот раздел">§</a></h2>
+<p>Изображение товара. Файл: <code>apps/catalog/models/product_image.py</code>.</p>
+
+<table>
+<tr><th>Поле</th><th>Тип</th><th>Описание</th></tr>
+<tr><td><code>product</code></td><td>FK(Product, CASCADE)</td><td>Товар</td></tr>
+<tr><td><code>image</code></td><td>ImageField(upload_to='products/%Y/%m/')</td><td>Файл изображения</td></tr>
+<tr><td><code>alt</code></td><td>CharField(255, blank)</td><td>SEO alt-текст</td></tr>
+<tr><td><code>is_main</code></td><td>BooleanField</td><td>Главное изображение (только одно на товар)</td></tr>
+<tr><td><code>order</code></td><td>PositiveIntegerField</td><td>Сортировка (drag-and-drop)</td></tr>
+</table>
+<p><strong>Partial UniqueConstraint</strong>: <code>unique_main_product_image</code> — UNIQUE(product) WHERE is_main=True</p>
+<div class="doc-box">[DOC] <a href="https://docs.djangoproject.com/en/stable/ref/models/fields/#imagefield">ImageField</a> · <a href="https://docs.djangoproject.com/en/stable/ref/models/constraints/#uniqueconstraint">UniqueConstraint(condition=...)</a></div>
+
+<!-- ============================================================ -->
+<h2 id="s1-4-brand">1.4 Brand <a class="anchor" href="#s1-4-brand" title="Ссылка на этот раздел">§</a></h2>
+<p>Бренд товара. Файл: <code>apps/catalog/models/brand.py</code>.</p>
+
+<table>
+<tr><th>Поле</th><th>Тип</th><th>Описание</th></tr>
+<tr><td><code>name</code></td><td>CharField(100, unique)</td><td>Название бренда</td></tr>
+<tr><td><code>slug</code></td><td>SlugField(255, unique, blank)</td><td>URL-slug, автогенерация, НЕ меняется при переименовании</td></tr>
+<tr><td><code>description</code></td><td>TextField(blank)</td><td>Описание бренда</td></tr>
+<tr><td><code>logo</code></td><td>ImageField(upload_to='brands/%Y/%m/', null)</td><td>Логотип</td></tr>
+<tr><td><code>is_active</code></td><td>BooleanField(db_index)</td><td>Мягкое удаление</td></tr>
+</table>
+<div class="sig">get_absolute_url(self) → str</div>
+<p>Возвращает <code>/brands/{self.slug}/</code></p>
+<div class="doc-box">[DOC] <a href="https://docs.djangoproject.com/en/stable/ref/models/instances/#get-absolute-url">get_absolute_url()</a></div>
+
+<!-- ============================================================ -->
+<h2 id="s1-5-category">1.5 Category (treebeard MP_Node) <a class="anchor" href="#s1-5-category" title="Ссылка на этот раздел">§</a></h2>
+<p>Иерархическая категория. Файл: <code>apps/catalog/models/category.py</code>. Наследует <code>MP_Node</code> + <code>BaseModel</code>.</p>
+
+<table>
+<tr><th>Поле</th><th>Тип</th><th>Описание</th></tr>
+<tr><td><code>name</code></td><td>CharField(200)</td><td>Название категории</td></tr>
+<tr><td><code>slug</code></td><td>SlugField(unique, null)</td><td>URL-slug</td></tr>
+<tr><td><code>description</code></td><td>TextField(blank)</td><td>Описание</td></tr>
+<tr><td><code>image</code></td><td>ImageField(null)</td><td>Изображение</td></tr>
+<tr><td><code>is_active</code></td><td>BooleanField(db_index)</td><td>Активна ли</td></tr>
+<tr><td><code>meta_title</code></td><td>CharField(255, blank)</td><td>SEO title</td></tr>
+<tr><td><code>meta_description</code></td><td>TextField(blank)</td><td>SEO description</td></tr>
+<tr><td><code>url_path</code></td><td>CharField(1000, editable=False, db_index)</td><td>Денормализованный: 'electronics/phones/smartphones'</td></tr>
+<tr><td><code>full_name_cached</code></td><td>CharField(2000, editable=False)</td><td>Денормализованный: 'Электроника → Телефоны → Смартфоны'</td></tr>
+</table>
+
+<h3 id="s1-5-category-treebeard">Методы treebeard (от MP_Node) <a class="anchor" href="#s1-5-category-treebeard" title="Ссылка на этот раздел">§</a></h3>
+<table>
+<tr><th>Метод</th><th>Описание</th><th>Документация</th></tr>
+<tr><td><code>Category.add_root(name=...)</code></td><td>Создать корневую категорию</td><td><a href="https://django-treebeard.readthedocs.io/en/latest/mp_tree.html#adding-nodes">Adding nodes</a></td></tr>
+<tr><td><code>node.add_child(name=...)</code></td><td>Создать дочернюю категорию</td><td><a href="https://django-treebeard.readthedocs.io/en/latest/mp_tree.html#adding-nodes">Adding nodes</a></td></tr>
+<tr><td><code>node.move(target, pos)</code></td><td>Переместить узел</td><td><a href="https://django-treebeard.readthedocs.io/en/latest/mp_tree.html#moving-nodes">Moving nodes</a></td></tr>
+<tr><td><code>node.get_children()</code></td><td>Прямые потомки (QuerySet)</td><td><a href="https://django-treebeard.readthedocs.io/en/latest/mp_tree.html#treebeard.mp_tree.MP_Node.get_children">get_children()</a></td></tr>
+<tr><td><code>node.get_ancestors()</code></td><td>Все предки (один SQL-запрос)</td><td><a href="https://django-treebeard.readthedocs.io/en/latest/mp_tree.html#treebeard.mp_tree.MP_Node.get_ancestors">get_ancestors()</a></td></tr>
+<tr><td><code>node.get_descendants()</code></td><td>Все потомки (один SQL-запрос)</td><td><a href="https://django-treebeard.readthedocs.io/en/latest/mp_tree.html#treebeard.mp_tree.MP_Node.get_descendants">get_descendants()</a></td></tr>
+<tr><td><code>node.get_parent()</code></td><td>Родительский узел</td><td><a href="https://django-treebeard.readthedocs.io/en/latest/mp_tree.html#treebeard.mp_tree.MP_Node.get_parent">get_parent()</a></td></tr>
+<tr><td><code>node.is_root()</code></td><td>Является ли корневым узлом</td><td><a href="https://django-treebeard.readthedocs.io/en/latest/mp_tree.html#treebeard.mp_tree.MP_Node.is_root">is_root()</a></td></tr>
+<tr><td><code>Category.get_root_nodes()</code></td><td>Все корневые категории</td><td><a href="https://django-treebeard.readthedocs.io/en/latest/mp_tree.html#treebeard.mp_tree.MP_Node.get_root_nodes">get_root_nodes()</a></td></tr>
+</table>
+
+<h3 id="s1-5-category-custom">Кастомные методы <a class="anchor" href="#s1-5-category-custom" title="Ссылка на этот раздел">§</a></h3>
+<div class="sig">_build_url_path(self) → str</div>
+<p>Склеивает slug'и всех предков через '/'</p>
+<div class="sig">_build_full_name(self) → str</div>
+<p>Склеивает названия предков через ' → '</p>
+<div class="sig">_refresh_descendants(self) → None</div>
+<p>Каскадно пересчитывает url_path и full_name_cached у ВСЕХ потомков через <code>bulk_update(batch_size=500)</code></p>
+<div class="sig">_rebuild_caches(self)</div>
+<p>Пересчитывает кэш для одного узла</p>
+
+<div class="callout callout-danger">
+<div class="callout-title">Запрещено!</div>
+<p><code>Category.objects.create(...)</code> — treebeard не обновит дерево. Только <code>add_root()</code> / <code>add_child()</code></p>
+</div>
+<div class="doc-box">[DOC] <a href="https://django-treebeard.readthedocs.io/en/latest/mp_tree.html">django-treebeard MP_Node</a> · <a href="https://docs.djangoproject.com/en/stable/ref/models/querysets/#bulk-update">bulk_update()</a></div>
+
+<!-- ============================================================ -->
+<h2 id="s1-6-tag">1.6 Tag <a class="anchor" href="#s1-6-tag" title="Ссылка на этот раздел">§</a></h2>
+<p>Плоская метка товара. Файл: <code>apps/catalog/models/tag.py</code>.</p>
+<table>
+<tr><th>Поле</th><th>Тип</th><th>Описание</th></tr>
+<tr><td><code>name</code></td><td>CharField(100, unique)</td><td>Название тега</td></tr>
+<tr><td><code>slug</code></td><td>SlugField(100, unique, blank)</td><td>URL-slug, автогенерация</td></tr>
+<tr><td><code>is_active</code></td><td>BooleanField(db_index)</td><td>Активен</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="s1-7-eav">1.7 EAV: Attribute / AttributeValue / VariantAttribute <a class="anchor" href="#s1-7-eav" title="Ссылка на этот раздел">§</a></h2>
+
+<h3 id="s1-7-eav-attribute">Attribute <a class="anchor" href="#s1-7-eav-attribute" title="Ссылка на этот раздел">§</a></h3>
+<p>Название характеристики: «Цвет», «Размер», «Память». Файл: <code>apps/catalog/models/attribute.py</code>.</p>
+<table>
+<tr><th>Поле</th><th>Тип</th><th>Описание</th></tr>
+<tr><td><code>name</code></td><td>CharField(100, unique)</td><td>Название атрибута</td></tr>
+<tr><td><code>slug</code></td><td>SlugField(100, unique, blank)</td><td>URL-slug</td></tr>
+<tr><td><code>description</code></td><td>TextField(blank)</td><td>Пояснение для менеджеров</td></tr>
+</table>
+
+<h3 id="s1-7-eav-attributevalue">AttributeValue <a class="anchor" href="#s1-7-eav-attributevalue" title="Ссылка на этот раздел">§</a></h3>
+<p>Допустимое значение атрибута: «Красный», «XL», «256 GB». Файл: <code>apps/catalog/models/attribute_value.py</code>.</p>
+<table>
+<tr><th>Поле</th><th>Тип</th><th>Описание</th></tr>
+<tr><td><code>attribute</code></td><td>FK(Attribute, CASCADE)</td><td>Принадлежность атрибуту</td></tr>
+<tr><td><code>value</code></td><td>CharField(100)</td><td>Текстовое значение</td></tr>
+<tr><td><code>color_hex</code></td><td>CharField(7, blank)</td><td>HEX-цвет для UI (#FF0000)</td></tr>
+</table>
+<p><strong>UniqueConstraint</strong>: (attribute, value) — у атрибута «Цвет» не может быть двух «Красный»</p>
+
+<h3 id="s1-7-eav-variantattribute">VariantAttribute <a class="anchor" href="#s1-7-eav-variantattribute" title="Ссылка на этот раздел">§</a></h3>
+<p>Связь варианта со значением атрибута. Файл: <code>apps/catalog/models/variant_attribute.py</code>.</p>
+<table>
+<tr><th>Поле</th><th>Тип</th><th>Описание</th></tr>
+<tr><td><code>variant</code></td><td>FK(ProductVariant, CASCADE)</td><td>Вариант товара</td></tr>
+<tr><td><code>attribute</code></td><td>FK(Attribute, CASCADE)</td><td>Атрибут</td></tr>
+<tr><td><code>value</code></td><td>FK(AttributeValue, CASCADE)</td><td>Значение</td></tr>
+</table>
+<p><strong>UniqueConstraint</strong>: (variant, attribute) — у варианта только ОДНО значение каждого атрибута</p>
+<p><strong>clean()</strong>: проверяет что value.attribute_id == attribute_id (нельзя Цвет=XL)</p>
+<div class="doc-box">[DOC] <a href="https://docs.djangoproject.com/en/stable/ref/models/instances/#django.db.models.Model.clean">Model.clean()</a> · <a href="https://en.wikipedia.org/wiki/Entity%E2%80%93attribute%E2%80%93value_data_model">EAV pattern (Wikipedia)</a></div>
+
+<!-- ============================================================ -->
+<h1 id="s2-konstanty">2. Константы (ProductStatus) <a class="anchor" href="#s2-konstanty" title="Ссылка на этот раздел">§</a></h1>
+<!-- ============================================================ -->
+
+<p>Файл: <code>apps/catalog/constants.py</code>. TextChoices — Django-аналог Enum.</p>
+<pre><code>class ProductStatus(models.TextChoices):
+    DRAFT = 'draft', 'Черновик'
+    ACTIVE = 'active', 'Активен'
+    OUT_OF_STOCK = 'out_of_stock', 'Нет в наличии'
+    ARCHIVED = 'archived', 'Архив'</code></pre>
+
+<div class="sig">is_visible_in_catalog (property) → bool</div>
+<p>Только <code>ACTIVE</code> виден покупателям.</p>
+<div class="doc-box">[DOC] <a href="https://docs.djangoproject.com/en/stable/ref/models/fields/#enumeration-types">TextChoices</a> · <a href="https://docs.djangoproject.com/en/stable/ref/models/instances/#django.db.models.Model.get_FOO_display">get_FOO_display()</a></div>
+
+<!-- ============================================================ -->
+<h1 id="s3-queryset">3. QuerySet (ProductQuerySet) <a class="anchor" href="#s3-queryset" title="Ссылка на этот раздел">§</a></h1>
+<!-- ============================================================ -->
+
+<p>Файл: <code>apps/catalog/querysets/product_queryset.py</code>. Компонуемый QuerySet: каждый метод возвращает новый QuerySet.</p>
+
+<h3 id="s3-queryset-filter">Фильтрация <a class="anchor" href="#s3-queryset-filter" title="Ссылка на этот раздел">§</a></h3>
+<table>
+<tr><th>Метод</th><th>SQL-аналог</th><th>Описание</th></tr>
+<tr><td><code>.active()</code></td><td>WHERE status='active'</td><td>Только активные товары</td></tr>
+<tr><td><code>.visible()</code></td><td>WHERE status='active' AND primary_category__is_active AND (published_at IS NULL OR published_at &lt;= NOW)</td><td>Видимые в каталоге</td></tr>
+<tr><td><code>.featured()</code></td><td>WHERE status='active' AND is_featured=True</td><td>Рекомендуемые</td></tr>
+<tr><td><code>.for_category(cat)</code></td><td>JOIN product_categories WHERE category_id=X</td><td>Товары в категории (M2M)</td></tr>
+<tr><td><code>.for_brand(brand)</code></td><td>WHERE brand_id=X</td><td>Товары бренда</td></tr>
+<tr><td><code>.price_range(min, max)</code></td><td>WHERE min_price &gt;= X AND max_price &lt;= Y</td><td>По денормализованным ценам</td></tr>
+<tr><td><code>.search(query)</code></td><td>WHERE search_vector @@ to_tsquery(query) (PostgreSQL) или ILIKE (SQLite)</td><td>Полнотекстовый поиск</td></tr>
+</table>
+
+<h3 id="s3-queryset-prefetch">Оптимизация (prefetch / select_related) <a class="anchor" href="#s3-queryset-prefetch" title="Ссылка на этот раздел">§</a></h3>
+<table>
+<tr><th>Метод</th><th>Что делает</th><th>Экономия запросов</th></tr>
+<tr><td><code>.with_related()</code></td><td><code>select_related('brand', 'primary_category', 'main_image')</code></td><td>3 JOIN вместо N+1</td></tr>
+<tr><td><code>.with_images()</code></td><td><code>prefetch_related('images')</code></td><td>1 запрос вместо N</td></tr>
+<tr><td><code>.with_variants()</code></td><td><code>Prefetch('variants', queryset=активные_с_ценой_и_стоком)</code></td><td>1 запрос + JOIN вместо 2N</td></tr>
+<tr><td><code>.with_categories()</code></td><td><code>prefetch_related('categories')</code></td><td>1 запрос вместо N</td></tr>
+</table>
+
+<h3 id="s3-queryset-composite">Композитные методы <a class="anchor" href="#s3-queryset-composite" title="Ссылка на этот раздел">§</a></h3>
+<table>
+<tr><th>Метод</th><th>Цепочка</th><th>Использование</th></tr>
+<tr><td><code>.catalog()</code></td><td>visible + with_related + with_images + with_variants</td><td>Listing-страница каталога</td></tr>
+<tr><td><code>.for_card()</code></td><td>with_related + with_images + with_variants + with_categories</td><td>Карточка товара (detail)</td></tr>
+</table>
+
+<div class="doc-box">[DOC] <a href="https://docs.djangoproject.com/en/stable/ref/models/querysets/#select-related">select_related()</a> · <a href="https://docs.djangoproject.com/en/stable/ref/models/querysets/#prefetch-related">prefetch_related()</a> · <a href="https://docs.djangoproject.com/en/stable/ref/models/querysets/#prefetch-object">Prefetch object</a> · <a href="https://docs.djangoproject.com/en/stable/topics/db/queries/#complex-lookups-with-q-objects">Q objects</a> · <a href="https://docs.djangoproject.com/en/stable/ref/contrib/postgres/search/">PostgreSQL full-text search</a></div>
+
+<!-- ============================================================ -->
+<h1 id="s4-manager">4. Manager (ProductManager) <a class="anchor" href="#s4-manager" title="Ссылка на этот раздел">§</a></h1>
+<!-- ============================================================ -->
+
+<p>Файл: <code>apps/catalog/managers/product_manager.py</code>.</p>
+<pre><code>class ProductManager(models.Manager.from_queryset(ProductQuerySet)):
+    pass</code></pre>
+<p><code>from_queryset()</code> автоматически переносит все методы QuerySet в Manager. Результат: <code>Product.objects.active()</code>, <code>Product.objects.catalog()</code> и т.д.</p>
+<div class="doc-box">[DOC] <a href="https://docs.djangoproject.com/en/stable/topics/db/managers/#from-queryset">Manager.from_queryset()</a> · <a href="https://docs.djangoproject.com/en/stable/topics/db/managers/#calling-custom-queryset-methods-from-the-manager">Calling custom QuerySet methods</a></div>
+
+<!-- ============================================================ -->
+<h1 id="s5-servisy">5. Сервисы <a class="anchor" href="#s5-servisy" title="Ссылка на этот раздел">§</a></h1>
+<!-- ============================================================ -->
+
+<h2 id="s5-1-catalogservice">5.1 CatalogService <a class="anchor" href="#s5-1-catalogservice" title="Ссылка на этот раздел">§</a></h2>
+<p>Файл: <code>apps/catalog/services/catalog_service.py</code>. Все методы — <code>@staticmethod</code>.</p>
+
+<h3 id="s5-1-catalogservice-products">Товары <a class="anchor" href="#s5-1-catalogservice-products" title="Ссылка на этот раздел">§</a></h3>
+<table>
+<tr><th>Метод</th><th>Описание</th><th>Возвращает</th></tr>
+<tr><td><code>get_product_by_uuid(uuid)</code></td><td>Поиск по UUID с for_card()</td><td>Product / NotFound</td></tr>
+<tr><td><code>get_product_by_slug(slug)</code></td><td>Поиск по slug с for_card()</td><td>Product / NotFound</td></tr>
+<tr><td><code>get_product_listing(...)</code></td><td>Listing с фильтрами + пагинация</td><td>(QuerySet, applied_filters)</td></tr>
+<tr><td><code>create_product(...)</code></td><td>Создание товара в транзакции</td><td>Product</td></tr>
+<tr><td><code>update_product(product, ...)</code></td><td>Обновление товара с валидацией</td><td>Product</td></tr>
+<tr><td><code>increment_product_views(product)</code></td><td>F()-инкремент просмотров</td><td>None</td></tr>
+</table>
+
+<h3 id="s5-1-catalogservice-categories">Категории <a class="anchor" href="#s5-1-catalogservice-categories" title="Ссылка на этот раздел">§</a></h3>
+<table>
+<tr><th>Метод</th><th>Описание</th></tr>
+<tr><td><code>get_category_tree()</code></td><td>Category.get_root_nodes() — корневые категории</td></tr>
+<tr><td><code>get_category_by_slug(slug)</code></td><td>Категория по slug / NotFound</td></tr>
+<tr><td><code>get_category_breadcrumbs(category)</code></td><td>Цепочка предков + сама категория</td></tr>
+</table>
+
+<h3 id="s5-1-catalogservice-brands">Бренды / Теги <a class="anchor" href="#s5-1-catalogservice-brands" title="Ссылка на этот раздел">§</a></h3>
+<table>
+<tr><th>Метод</th><th>Описание</th></tr>
+<tr><td><code>get_active_brands()</code></td><td>Brand.objects.filter(is_active=True).order_by('name')</td></tr>
+<tr><td><code>get_brand_by_slug(slug)</code></td><td>Бренд по slug / NotFound</td></tr>
+<tr><td><code>get_active_tags()</code></td><td>Tag.objects.filter(is_active=True).order_by('name')</td></tr>
+</table>
+
+<div class="sig">get_product_listing(*, category_slug, brand_slug, tag_slug, min_price, max_price, search_query, ordering) → tuple[QuerySet, dict]</div>
+<p><code>*</code> — keyword-only аргументы. Возвращает (qs, applied_filters) для UI.</p>
+
+<div class="sig">create_product(*, name, brand_id, ...) → Product</div>
+<p>Обёрнут в <code>@transaction.atomic</code>. Создаёт товар + M2M-связи.</p>
+
+<div class="callout callout-tip">
+<div class="callout-title">Паттерн: View → Serializer → Service → ORM</div>
+<p>View не содержит бизнес-логику. View вызывает Service, Service работает с ORM. Это позволяет переиспользовать Service из management-команд, Celery-задач, тестов.</p>
+</div>
+
+<div class="doc-box">[DOC] <a href="https://docs.djangoproject.com/en/stable/topics/db/transactions/#django.db.transaction.atomic">transaction.atomic</a> · <a href="https://docs.djangoproject.com/en/stable/topics/http/shortcuts/#get-object-or-404">get_object_or_404()</a> · <a href="https://www.django-rest-framework.org/api-guide/exceptions/#notfound">NotFound (DRF)</a></div>
+
+<h2 id="s5-2-slugservice">5.2 SlugService <a class="anchor" href="#s5-2-slugservice" title="Ссылка на этот раздел">§</a></h2>
+<p>Файл: <code>apps/catalog/services/slug_service.py</code>.</p>
+
+<div class="sig">generate_unique_slug(instance, field_value, slug_field_name='slug') → str</div>
+<p>Генерирует уникальный slug. Если занят — добавляет суффикс: «nike» → «nike-2» → «nike-3».</p>
+<p>Использует <code>django.utils.text.slugify()</code>. Исключает текущий объект из проверки (<code>exclude(pk=instance.pk)</code>).</p>
+<div class="doc-box">[DOC] <a href="https://docs.djangoproject.com/en/stable/ref/utils/#django.utils.text.slugify">slugify()</a></div>
+
+<!-- ============================================================ -->
+<h1 id="s6-serializatory">6. Сериализаторы <a class="anchor" href="#s6-serializatory" title="Ссылка на этот раздел">§</a></h1>
+<!-- ============================================================ -->
+
+<h2 id="s6-1-product-serializers">6.1 Product сериализаторы <a class="anchor" href="#s6-1-product-serializers" title="Ссылка на этот раздел">§</a></h2>
+<p>Файл: <code>apps/catalog/serializers/product_serializers.py</code>.</p>
+
+<table>
+<tr><th>Класс</th><th>Тип</th><th>Назначение</th><th>Поля</th></tr>
+<tr><td><code>ProductImageSerializer</code></td><td>ModelSerializer</td><td>Изображение (только чтение)</td><td>id, image, alt, is_main, order</td></tr>
+<tr><td><code>ProductVariantListSerializer</code></td><td>ModelSerializer</td><td>Вариант для карточки</td><td>id, sku, slug, price, stock_quantity, is_active</td></tr>
+<tr><td><code>ProductListSerializer</code></td><td>ModelSerializer</td><td>Listing (50 товаров)</td><td>uuid, name, slug, brand_*, category_*, main_image_url, prices, rating, ...</td></tr>
+<tr><td><code>ProductDetailSerializer</code></td><td>ModelSerializer</td><td>Карточка товара</td><td>Все + description, images, variants, tags, SEO</td></tr>
+<tr><td><code>ProductListQuerySerializer</code></td><td>Serializer</td><td>Валидация ?category=&amp;brand=&amp;search=</td><td>category, brand, tag, min_price, max_price, search, ordering</td></tr>
+<tr><td><code>CreateProductInputSerializer</code></td><td>Serializer</td><td>Валидация POST-тела</td><td>name, brand_id, primary_category_id, description, ...</td></tr>
+<tr><td><code>UpdateProductInputSerializer</code></td><td>Serializer</td><td>Валидация PATCH-тела</td><td>Все поля optional</td></tr>
+</table>
+
+<h3 id="s6-1-product-serializers-drf">Ключевые DRF-классы и паттерны <a class="anchor" href="#s6-1-product-serializers-drf" title="Ссылка на этот раздел">§</a></h3>
+<table>
+<tr><th>Класс/атрибут</th><th>Применение</th><th>Документация</th></tr>
+<tr><td><code>serializers.ModelSerializer</code></td><td>Авто-поля из модели</td><td><a href="https://www.django-rest-framework.org/api-guide/serializers/#modelserializer">ModelSerializer</a></td></tr>
+<tr><td><code>serializers.Serializer</code></td><td>Ручные поля (input/query)</td><td><a href="https://www.django-rest-framework.org/api-guide/serializers/#serializer">Serializer</a></td></tr>
+<tr><td><code>source='brand.name'</code></td><td>Навигация по FK</td><td><a href="https://www.django-rest-framework.org/api-guide/serializers/#source">source</a></td></tr>
+<tr><td><code>SlugRelatedField</code></td><td>Отображать slug вместо id</td><td><a href="https://www.django-rest-framework.org/api-guide/relations/#slugrelatedfield">SlugRelatedField</a></td></tr>
+<tr><td><code>SerializerMethodField</code></td><td>Вычисляемое поле (get_*)</td><td><a href="https://www.django-rest-framework.org/api-guide/fields/#serializermethodfield">SerializerMethodField</a></td></tr>
+<tr><td><code>read_only_fields = fields</code></td><td>Все поля только для чтения</td><td><a href="https://www.django-rest-framework.org/api-guide/serializers/#specifying-read-only-fields">read_only_fields</a></td></tr>
+<tr><td><code>ImageField</code></td><td>Авто-URL из ImageField модели</td><td><a href="https://www.django-rest-framework.org/api-guide/fields/#imagefield">ImageField (DRF)</a></td></tr>
+</table>
+
+<h2 id="s6-2-brand-serializers">6.2 Brand сериализаторы <a class="anchor" href="#s6-2-brand-serializers" title="Ссылка на этот раздел">§</a></h2>
+<p>Файл: <code>apps/catalog/serializers/brand_serializers.py</code>.</p>
+<table>
+<tr><th>Класс</th><th>Поля</th></tr>
+<tr><td><code>BrandListSerializer</code></td><td>id, name, slug, logo</td></tr>
+<tr><td><code>BrandDetailSerializer</code></td><td>+, description, products_count (динамическое)</td></tr>
+</table>
+
+<h2 id="s6-3-category-serializers">6.3 Category сериализаторы <a class="anchor" href="#s6-3-category-serializers" title="Ссылка на этот раздел">§</a></h2>
+<p>Файл: <code>apps/catalog/serializers/category_serializers.py</code>.</p>
+<table>
+<tr><th>Класс</th><th>Поля</th></tr>
+<tr><td><code>BreadcrumbSerializer</code></td><td>name, slug, url_path</td></tr>
+<tr><td><code>CategoryTreeSerializer</code></td><td>id, name, slug, url_path, depth, is_active, children (SerializerMethodField — рекурсия!)</td></tr>
+<tr><td><code>CategoryDetailSerializer</code></td><td>+, description, image, full_name_cached, breadcrumbs, products_count</td></tr>
+</table>
+
+<h2 id="s6-4-tag-serializer">6.4 Tag сериализатор <a class="anchor" href="#s6-4-tag-serializer" title="Ссылка на этот раздел">§</a></h2>
+<p>Файл: <code>apps/catalog/serializers/tag_serializers.py</code>.</p>
+<table>
+<tr><th>Класс</th><th>Поля</th></tr>
+<tr><td><code>TagSerializer</code></td><td>id, name, slug (все read-only)</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h1 id="s7-views">7. Views (API-эндпоинты) <a class="anchor" href="#s7-views" title="Ссылка на этот раздел">§</a></h1>
+<!-- ============================================================ -->
+
+<h2 id="s7-1-product-views">7.1 Product Views <a class="anchor" href="#s7-1-product-views" title="Ссылка на этот раздел">§</a></h2>
+<p>Файл: <code>apps/catalog/api_views/product_views.py</code>.</p>
+
+<table>
+<tr><th>View</th><th>Метод</th><th>URL</th><th>Permissions</th></tr>
+<tr><td><code>ProductListView</code></td><td>GET</td><td>/api/v1/catalog/products/</td><td>AllowAny</td></tr>
+<tr><td><code>ProductDetailView</code></td><td>GET</td><td>/api/v1/catalog/products/{id}/</td><td>AllowAny</td></tr>
+<tr><td><code>ProductCreateView</code></td><td>POST</td><td>/api/v1/catalog/products/create/</td><td>IsAuthenticated</td></tr>
+<tr><td><code>ProductUpdateView</code></td><td>PATCH</td><td>/api/v1/catalog/products/{uuid}/update/</td><td>IsAuthenticated</td></tr>
+</table>
+
+<h3 id="s7-1-product-views-drf">Ключевые DRF-классы <a class="anchor" href="#s7-1-product-views-drf" title="Ссылка на этот раздел">§</a></h3>
+<table>
+<tr><th>Класс</th><th>Применение</th><th>Документация</th></tr>
+<tr><td><code>APIView</code></td><td>Базовый класс для всех views</td><td><a href="https://www.django-rest-framework.org/api-guide/views/#apiview">APIView</a></td></tr>
+<tr><td><code>AllowAny</code></td><td>Публичный доступ (без JWT)</td><td><a href="https://www.django-rest-framework.org/api-guide/permissions/#allowany">AllowAny</a></td></tr>
+<tr><td><code>IsAuthenticated</code></td><td>Требует JWT</td><td><a href="https://www.django-rest-framework.org/api-guide/permissions/#isauthenticated">IsAuthenticated</a></td></tr>
+<tr><td><code>Response(data)</code></td><td>JSON-ответ</td><td><a href="https://www.django-rest-framework.org/api-guide/responses/#response">Response</a></td></tr>
+<tr><td><code>PageNumberPagination</code></td><td>Пагинация listings</td><td><a href="https://www.django-rest-framework.org/api-guide/pagination/#pagenumberpagination">PageNumberPagination</a></td></tr>
+<tr><td><code>extend_schema</code></td><td>Swagger-документация</td><td><a href="https://drf-spectacular.readthedocs.io/en/latest/drf_spectacular.html#extend-schema">extend_schema</a></td></tr>
+</table>
+
+<h2 id="s7-2-brand-views">7.2 Brand Views <a class="anchor" href="#s7-2-brand-views" title="Ссылка на этот раздел">§</a></h2>
+<table>
+<tr><th>View</th><th>Метод</th><th>URL</th><th>Описание</th></tr>
+<tr><td><code>BrandListView</code></td><td>GET</td><td>/api/v1/catalog/brands/</td><td>Все активные бренды</td></tr>
+<tr><td><code>BrandDetailView</code></td><td>GET</td><td>/api/v1/catalog/brands/{slug}/</td><td>Бренд + products_count (setattr)</td></tr>
+</table>
+
+<h2 id="s7-3-category-views">7.3 Category Views <a class="anchor" href="#s7-3-category-views" title="Ссылка на этот раздел">§</a></h2>
+<table>
+<tr><th>View</th><th>Метод</th><th>URL</th><th>Описание</th></tr>
+<tr><td><code>CategoryTreeView</code></td><td>GET</td><td>/api/v1/catalog/categories/</td><td>Рекурсивное дерево</td></tr>
+<tr><td><code>CategoryDetailView</code></td><td>GET</td><td>/api/v1/catalog/categories/{slug}/</td><td>Категория + breadcrumbs + products_count</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h1 id="s8-signaly">8. Сигналы (signals.py) <a class="anchor" href="#s8-signaly" title="Ссылка на этот раздел">§</a></h1>
+<!-- ============================================================ -->
+
+<p>Файл: <code>apps/catalog/signals.py</code>.</p>
+
+<table>
+<tr><th>Сигнал</th><th>Sender</th><th>Действие</th></tr>
+<tr><td><code>post_save(ProductImage)</code></td><td>ProductImage</td><td>Установка/сброс Product.main_image</td></tr>
+<tr><td><code>post_delete(ProductImage)</code></td><td>ProductImage</td><td>Очистка Product.main_image при удалении</td></tr>
+<tr><td><code>post_save(ProductVariant)</code></td><td>ProductVariant</td><td>Пересчёт min_price/max_price при изменении is_active</td></tr>
+<tr><td><code>post_delete(ProductVariant)</code></td><td>ProductVariant</td><td>Пересчёт min_price/max_price</td></tr>
+<tr><td><code>post_save(Product)</code></td><td>Product</td><td>Обновление search_vector (только при изменении name/description)</td></tr>
+</table>
+
+<h3 id="s8-signaly-methods">Ключевые методы в сигналах <a class="anchor" href="#s8-signaly-methods" title="Ссылка на этот раздел">§</a></h3>
+<div class="sig">update_product_main_image(sender, instance, **kwargs)</div>
+<p>При <code>is_main=True</code>: <code>Product.objects.filter(pk=...).update(main_image=image)</code> — обходит сигналы Product (оптимально).</p>
+
+<div class="sig">clear_product_main_image_on_delete(sender, instance, **kwargs)</div>
+<p>При удалении главного изображения: <code>Product.objects.filter(main_image=instance).update(main_image=None)</code></p>
+
+<div class="sig">on_variant_change(sender, instance, **kwargs)</div>
+<p>Если <code>is_active</code> изменился → пересчитывает цены товара. Проверяет <code>kwargs['created']</code> — только при обновлении, не создании.</p>
+
+<div class="sig">update_product_search_vector(sender, instance, **kwargs)</div>
+<p>Обновляет <code>search_vector</code> через <code>SearchVector('name', weight='A', config='russian') + SearchVector('description', weight='B', config='russian')</code>. Пропускается если <code>update_fields</code> не включает name/description. SQLite-совместимо (пропускает тихо).</p>
+
+<div class="doc-box">[DOC] <a href="https://docs.djangoproject.com/en/stable/ref/signals/#post-save">post_save</a> · <a href="https://docs.djangoproject.com/en/stable/ref/signals/#post-delete">post_delete</a> · <a href="https://docs.djangoproject.com/en/stable/ref/contrib/postgres/search/#searchvector">SearchVector</a> · <a href="https://docs.djangoproject.com/en/stable/ref/models/querysets/#update">QuerySet.update()</a></div>
+
+<!-- ============================================================ -->
+<h1 id="s9-admin">9. Admin <a class="anchor" href="#s9-admin" title="Ссылка на этот раздел">§</a></h1>
+<!-- ============================================================ -->
+
+<table>
+<tr><th>Admin-класс</th><th>Модель</th><th>Особенности</th></tr>
+<tr><td><code>ProductAdmin</code></td><td>Product</td><td>Fieldsets (6 секций), inline-изображения/варианты, цветной статус, price_range</td></tr>
+<tr><td><code>CategoryAdmin</code></td><td>Category</td><td>treebeard поля в collapse-секции, actions (activate/deactivate), url_path</td></tr>
+<tr><td><code>BrandAdmin</code></td><td>Brand</td><td>prepopulated_fields={'slug': ('name',)}, logo_preview</td></tr>
+<tr><td><code>TagAdmin</code></td><td>Tag</td><td>list_editable=('is_active',), slug readonly</td></tr>
+<tr><td><code>ProductVariantAdmin</code></td><td>ProductVariant</td><td>list_filter по is_active, поиск по SKU</td></tr>
+<tr><td><code>AttributeAdmin</code></td><td>Attribute</td><td>AttributeValueInline, values_count</td></tr>
+<tr><td><code>AttributeValueAdmin</code></td><td>AttributeValue</td><td>color_hex preview, list_filter по attribute</td></tr>
+</table>
+
+<h3 id="s9-admin-classes">Ключевые Admin-классы и методы <a class="anchor" href="#s9-admin-classes" title="Ссылка на этот раздел">§</a></h3>
+<table>
+<tr><th>Класс/метод</th><th>Применение</th><th>Документация</th></tr>
+<tr><td><code>admin.ModelAdmin</code></td><td>Базовый класс для admin</td><td><a href="https://docs.djangoproject.com/en/stable/ref/contrib/admin/#modeladmin-options">ModelAdmin options</a></td></tr>
+<tr><td><code>admin.register(Model)</code></td><td>Декоратор регистрации</td><td><a href="https://docs.djangoproject.com/en/stable/ref/contrib/admin/#the-register-decorator">@admin.register()</a></td></tr>
+<tr><td><code>TabularInline</code></td><td>Inline-таблица (изображения, варианты)</td><td><a href="https://docs.djangoproject.com/en/stable/ref/contrib/admin/#tabularinline">TabularInline</a></td></tr>
+<tr><td><code>fieldsets</code></td><td>Группировка полей</td><td><a href="https://docs.djangoproject.com/en/stable/ref/contrib/admin/#django.contrib.admin.ModelAdmin.fieldsets">fieldsets</a></td></tr>
+<tr><td><code>prepopulated_fields</code></td><td>Автогенерация slug из name</td><td><a href="https://docs.djangoproject.com/en/stable/ref/contrib/admin/#django.contrib.admin.ModelAdmin.prepopulated_fields">prepopulated_fields</a></td></tr>
+<tr><td><code>list_editable</code></td><td>Inline-редактирование в списке</td><td><a href="https://docs.djangoproject.com/en/stable/ref/contrib/admin/#django.contrib.admin.ModelAdmin.list_editable">list_editable</a></td></tr>
+<tr><td><code>format_html()</code></td><td>Безопасный HTML в admin (превью, цвета)</td><td><a href="https://docs.djangoproject.com/en/stable/ref/utils/#django.utils.html.format_html">format_html()</a></td></tr>
+<tr><td><code>list_select_related</code></td><td>Оптимизация списка (JOIN)</td><td><a href="https://docs.djangoproject.com/en/stable/ref/contrib/admin/#django.contrib.admin.ModelAdmin.list_select_related">list_select_related</a></td></tr>
+<tr><td><code>@admin.action</code></td><td>Массовые действия</td><td><a href="https://docs.djangoproject.com/en/stable/ref/contrib/admin/actions/">Admin actions</a></td></tr>
+<tr><td><code>admin.display(description=...)</code></td><td>Кастомные колонки</td><td><a href="https://docs.djangoproject.com/en/stable/ref/contrib/admin/#django.contrib.admin.display">admin.display</a></td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h1 id="s10-urls">10. URL-маршруты <a class="anchor" href="#s10-urls" title="Ссылка на этот раздел">§</a></h1>
+<!-- ============================================================ -->
+
+<p>Файл: <code>apps/catalog/urls.py</code>.</p>
+
+<table>
+<tr><th>Метод</th><th>URL</th><th>View</th><th>Описание</th></tr>
+<tr><td>GET</td><td><code>/api/v1/catalog/products/</code></td><td>ProductListView</td><td>Listing с фильтрами</td></tr>
+<tr><td>GET</td><td><code>/api/v1/catalog/products/{slug_or_uuid}/</code></td><td>ProductDetailView</td><td>Карточка товара</td></tr>
+<tr><td>POST</td><td><code>/api/v1/catalog/products/create/</code></td><td>ProductCreateView</td><td>Создание (staff)</td></tr>
+<tr><td>PATCH</td><td><code>/api/v1/catalog/products/{uuid}/update/</code></td><td>ProductUpdateView</td><td>Обновление (staff)</td></tr>
+<tr><td>GET</td><td><code>/api/v1/catalog/categories/</code></td><td>CategoryTreeView</td><td>Дерево категорий</td></tr>
+<tr><td>GET</td><td><code>/api/v1/catalog/categories/{slug}/</code></td><td>CategoryDetailView</td><td>Детали категории</td></tr>
+<tr><td>GET</td><td><code>/api/v1/catalog/brands/</code></td><td>BrandListView</td><td>Список брендов</td></tr>
+<tr><td>GET</td><td><code>/api/v1/catalog/brands/{slug}/</code></td><td>BrandDetailView</td><td>Детали бренда</td></tr>
+</table>
+
+<div class="doc-box">[DOC] <a href="https://docs.djangoproject.com/en/stable/topics/http/urls/">Django URL dispatcher</a> · <a href="https://docs.djangoproject.com/en/stable/ref/urls/#path">path()</a> · <a href="https://docs.djangoproject.com/en/stable/ref/urls/#django.urls.include">include()</a></div>
+
+<!-- ============================================================ -->
+<h1 id="s-glossary">Приложение: Глоссарий <a class="anchor" href="#s-glossary" title="Ссылка на этот раздел">§</a></h1>
+<!-- ============================================================ -->
+
+<table>
+<tr><th>Термин</th><th>Определение</th><th>Документация</th></tr>
+<tr><td><strong>BaseModel</strong></td><td>Абстрактная модель с id (BigAutoField), created_at, updated_at</td><td><a href="https://docs.djangoproject.com/en/stable/topics/db/models/#abstract-base-classes">Abstract base classes</a></td></tr>
+<tr><td><strong>UUIDField</strong></td><td>Хранит UUID v4 (случайный 128-битный ID)</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/fields/#uuidfield">UUIDField</a></td></tr>
+<tr><td><strong>SlugField</strong></td><td>URL-friendly текст: только a-z, 0-9, дефисы</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/fields/#slugfield">SlugField</a></td></tr>
+<tr><td><strong>PROTECT</strong></td><td>Запрещает удаление объекта, на который ссылаются</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/fields/#django.db.models.ForeignKey.on_delete">on_delete</a></td></tr>
+<tr><td><strong>CASCADE</strong></td><td>При удалении родителя — удалить всех детей</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/fields/#django.db.models.ForeignKey.on_delete">on_delete</a></td></tr>
+<tr><td><strong>ManyToManyField</strong></td><td>M2M связь через промежуточную таблицу</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/fields/#manytomanyfield">ManyToManyField</a></td></tr>
+<tr><td><strong>SearchVectorField</strong></td><td>PostgreSQL tsvector для полнотекстового поиска</td><td><a href="https://docs.djangoproject.com/en/stable/ref/contrib/postgres/search/#searchvectorfield">SearchVectorField</a></td></tr>
+<tr><td><strong>GinIndex</strong></td><td>Инвертированный индекс (для tsvector)</td><td><a href="https://docs.djangoproject.com/en/stable/ref/contrib/postgres/indexes/#ginindex">GinIndex</a></td></tr>
+<tr><td><strong>F() expression</strong></td><td>Ссылка на значение поля в БД (атомарная арифметика)</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/expressions/#f-expressions">F()</a></td></tr>
+<tr><td><strong>Q object</strong></td><td>OR/AND/NOT условия для filter()</td><td><a href="https://docs.djangoproject.com/en/stable/topics/db/queries/#complex-lookups-with-q-objects">Q objects</a></td></tr>
+<tr><td><strong>Prefetch</strong></td><td>Кастомный QuerySet для prefetch_related</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/querysets/#prefetch-object">Prefetch</a></td></tr>
+<tr><td><strong>select_related</strong></td><td>JOIN для FK/OneToOne (1 запрос)</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/querysets/#select-related">select_related</a></td></tr>
+<tr><td><strong>prefetch_related</strong></td><td>Отдельный SELECT для M2M/reverse FK (2 запроса)</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/querysets/#prefetch-related">prefetch_related</a></td></tr>
+<tr><td><strong>bulk_update</strong></td><td>Обновление многих объектов одним SQL</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/querysets/#bulk-update">bulk_update</a></td></tr>
+<tr><td><strong>MP_Node (treebeard)</strong></td><td>Materialized Path: хранение дерева в БД</td><td><a href="https://django-treebeard.readthedocs.io/en/latest/mp_tree.html">MP_Node docs</a></td></tr>
+<tr><td><strong>EAV</strong></td><td>Entity-Attribute-Value: гибкие характеристики товаров</td><td><a href="https://en.wikipedia.org/wiki/Entity%E2%80%93attribute%E2%80%93value_data_model">EAV pattern</a></td></tr>
+<tr><td><strong>UniqueConstraint(condition)</strong></td><td>Частичный уникальный индекс (WHERE ...)</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/constraints/#uniqueconstraint">UniqueConstraint</a></td></tr>
+<tr><td><strong>CheckConstraint</strong></td><td>Ограничение-проверка на уровне БД</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/constraints/#checkconstraint">CheckConstraint</a></td></tr>
+<tr><td><strong>Partial index</strong></td><td>Индекс с условием WHERE (только ACTIVE строки)</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/indexes/#conditional-indexes">Conditional indexes</a></td></tr>
+<tr><td><strong>TextChoices</strong></td><td>Django-Enum для CharField choices</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/fields/#enumeration-types">TextChoices</a></td></tr>
+<tr><td><strong>ImageField</strong></td><td>Поле для загрузки файлов-изображений</td><td><a href="https://docs.djangoproject.com/en/stable/ref/models/fields/#imagefield">ImageField</a></td></tr>
+<tr><td><strong>transaction.atomic</strong></td><td>«Всё или ничего»: BEGIN...COMMIT/ROLLBACK</td><td><a href="https://docs.djangoproject.com/en/stable/topics/db/transactions/#django.db.transaction.atomic">atomic</a></td></tr>
+<tr><td><strong>ModelSerializer</strong></td><td>DRF-сериализатор, автогенерация полей из модели</td><td><a href="https://www.django-rest-framework.org/api-guide/serializers/#modelserializer">ModelSerializer</a></td></tr>
+<tr><td><strong>APIView</strong></td><td>DRF-базовый класс для API views</td><td><a href="https://www.django-rest-framework.org/api-guide/views/">APIView</a></td></tr>
+<tr><td><strong>PageNumberPagination</strong></td><td>Страничная пагинация DRF</td><td><a href="https://www.django-rest-framework.org/api-guide/pagination/">Pagination</a></td></tr>
+<tr><td><strong>AllowAny / IsAuthenticated</strong></td><td>Классы разрешений DRF</td><td><a href="https://www.django-rest-framework.org/api-guide/permissions/">Permissions</a></td></tr>
+<tr><td><strong>from_queryset()</strong></td><td>Магия: методы QS доступны через Manager</td><td><a href="https://docs.djangoproject.com/en/stable/topics/db/managers/#from-queryset">from_queryset</a></td></tr>
+<tr><td><strong>drf-spectacular</strong></td><td>Генерация OpenAPI/Swagger из DRF views</td><td><a href="https://drf-spectacular.readthedocs.io/">drf-spectacular</a></td></tr>
+</table>
+
+</body>
+</html>

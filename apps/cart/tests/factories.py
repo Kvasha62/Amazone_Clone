@@ -53,6 +53,7 @@ class CartTestCase(TestCase):
       - 1 пользователь (buyer)
       - 1 бренд, 1 категория, 1 товар
       - 2 варианта товара (SKU-A, SKU-B)
+      - 1 неактивный вариант (SKU-INACTIVE)
     """
 
     @classmethod
@@ -123,3 +124,21 @@ class CartTestCase(TestCase):
         })()
         request.session = MockSession(session_key=session_key)
         return request
+
+    def _create_stock(self, variant, quantity=100, reserved=0):
+        """Создаёт запись Stock для варианта."""
+        from apps.inventory.models import Stock
+        return Stock.objects.create(
+            variant=variant,
+            quantity=quantity,
+            reserved_quantity=reserved,
+        )
+
+    def _create_price(self, variant, price=Decimal('1000.00'), sale_price=None):
+        """Создаёт запись Price для варианта."""
+        from apps.pricing.models import Price
+        return Price.objects.create(
+            variant=variant,
+            price=price,
+            sale_price=sale_price,
+        )

@@ -3,6 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/Amazone_Clone.iml" filepath="$PROJECT_DIR$/.idea/Amazone_Clone.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../frontend/.idea/frontend.iml" filepath="$PROJECT_DIR$/../frontend/.idea/frontend.iml" />
     </modules>
   </component>
 </project>

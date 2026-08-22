@@ -1,19 +1,30 @@
 """
 Тесты CartService — бизнес-логика корзины.
+
+⚠️  ВАЖНО: PostgreSQL запрещает FOR UPDATE на nullable-стороне LEFT JOIN.
+Все тесты работают с PostgreSQL, где select_for_update() совместим
+только с INNER JOIN (обязательные FK). Обратные OneToOne (stock, price)
+читаются отдельными запросами без FOR UPDATE.
 """
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 
 from apps.cart.constants import MAX_CART_ITEMS, MAX_ITEM_QUANTITY
 from apps.cart.models import Cart, CartItem
 from apps.cart.services.cart_service import CartService
 from apps.cart.tests.factories import CartTestCase
-from apps.catalog.models import Product
+from apps.catalog.models import Product, ProductVariant
 from apps.catalog.constants import ProductStatus
 
 from rest_framework.exceptions import NotFound, ValidationError
 
 User = get_user_model()
 
+
+# ==============================================================
+# get_or_create_cart
+# ==============================================================
 
 class GetOrCreateCartTests(CartTestCase):
 
@@ -53,11 +64,14 @@ class GetOrCreateCartTests(CartTestCase):
     def test_guest_without_session_key_creates_one(self):
         """Если у гостя нет session_key — get_or_create_cart вызывает create()."""
         request = self._make_guest_request(session_key=None)
-        # session_key None → MockSession.create() назначит ключ
         cart = CartService.get_or_create_cart(request)
         self.assertIsNone(cart.user)
         self.assertTrue(cart.session_key_hash)
 
+
+# ==============================================================
+# add_item
+# ==============================================================
 
 class AddItemTests(CartTestCase):
 
@@ -100,7 +114,6 @@ class AddItemTests(CartTestCase):
             primary_category=self.root_cat,
             status=ProductStatus.ARCHIVED,
         )
-        from apps.catalog.models import ProductVariant
         variant = ProductVariant.objects.create(
             product=archived_product,
             sku='SKU-ARCHIVED',
@@ -117,7 +130,6 @@ class AddItemTests(CartTestCase):
             primary_category=self.root_cat,
             status=ProductStatus.DRAFT,
         )
-        from apps.catalog.models import ProductVariant
         variant = ProductVariant.objects.create(
             product=draft_product,
             sku='SKU-DRAFT',
@@ -127,8 +139,6 @@ class AddItemTests(CartTestCase):
             CartService.add_item(self.cart, variant.pk, 1)
 
     def test_add_reject_exceeds_max_items(self):
-        from apps.catalog.models import ProductVariant
-
         for i in range(MAX_CART_ITEMS):
             v = ProductVariant.objects.create(
                 product=self.product,
@@ -152,6 +162,43 @@ class AddItemTests(CartTestCase):
         )
         self.assertEqual(item.quantity, MAX_ITEM_QUANTITY)
 
+    # ── Тесты с Stock (PostgreSQL: stock через отдельный запрос) ──
+
+    def test_add_with_sufficient_stock(self):
+        """Достаточно на складе — добавление OK."""
+        self._create_stock(self.variant_a, quantity=10)
+        item = CartService.add_item(self.cart, self.variant_a.pk, 5)
+        self.assertEqual(item.quantity, 5)
+
+    def test_add_reject_exceeds_stock(self):
+        """Запрошено больше чем на складе — ValidationError."""
+        self._create_stock(self.variant_a, quantity=3)
+        with self.assertRaises(ValidationError):
+            CartService.add_item(self.cart, self.variant_a.pk, 5)
+
+    def test_add_increment_respects_stock(self):
+        """При увеличении количества — проверка stock."""
+        self._create_stock(self.variant_a, quantity=5)
+        CartService.add_item(self.cart, self.variant_a.pk, 3)
+        # 3 в корзине + 3 хотим добавить = 6 > 5 на складе → ошибка
+        with self.assertRaises(ValidationError):
+            CartService.add_item(self.cart, self.variant_a.pk, 3)
+
+    def test_add_no_stock_record_allows_any_quantity(self):
+        """Нет записи Stock — нет ограничения (stock=None)."""
+        item = CartService.add_item(self.cart, self.variant_a.pk, 999)
+        self.assertEqual(item.quantity, 999)
+
+    def test_add_with_stock_exact_quantity(self):
+        """Запрошено ровно столько, сколько на складе — OK."""
+        self._create_stock(self.variant_a, quantity=5)
+        item = CartService.add_item(self.cart, self.variant_a.pk, 5)
+        self.assertEqual(item.quantity, 5)
+
+
+# ==============================================================
+# update_item_quantity
+# ==============================================================
 
 class UpdateItemTests(CartTestCase):
 
@@ -166,7 +213,9 @@ class UpdateItemTests(CartTestCase):
         self.assertEqual(item.quantity, 5)
 
     def test_update_reject_not_owned_item(self):
-        other_user = User.objects.create_user(username='other', email='other@test.com', password='p')
+        other_user = User.objects.create_user(
+            username='other', email='other@test.com', password='p',
+        )
         other_cart = self._create_cart(user=other_user)
         with self.assertRaises(NotFound):
             CartService.update_item_quantity(other_cart, self.item.pk, 3)
@@ -186,6 +235,29 @@ class UpdateItemTests(CartTestCase):
         item = CartService.update_item_quantity(self.cart, self.item.pk, 1)
         self.assertEqual(item.quantity, 1)
 
+    def test_update_with_stock_limit(self):
+        """Нельзя обновить количество больше чем stock."""
+        self._create_stock(self.variant_a, quantity=3)
+        with self.assertRaises(ValidationError):
+            CartService.update_item_quantity(self.cart, self.item.pk, 5)
+
+    def test_update_within_stock(self):
+        """Обновление количества в пределах stock — OK."""
+        self._create_stock(self.variant_a, quantity=10)
+        item = CartService.update_item_quantity(self.cart, self.item.pk, 8)
+        self.assertEqual(item.quantity, 8)
+
+    def test_update_no_stock_allows_any_quantity(self):
+        """Нет Stock — нет ограничения."""
+        item = CartService.update_item_quantity(
+            self.cart, self.item.pk, MAX_ITEM_QUANTITY,
+        )
+        self.assertEqual(item.quantity, MAX_ITEM_QUANTITY)
+
+
+# ==============================================================
+# remove_item
+# ==============================================================
 
 class RemoveItemTests(CartTestCase):
 
@@ -202,7 +274,9 @@ class RemoveItemTests(CartTestCase):
             CartService.remove_item(self.cart, 99999)
 
     def test_remove_reject_not_owned(self):
-        other_user = User.objects.create_user(username='other2', email='other2@test.com', password='p')
+        other_user = User.objects.create_user(
+            username='other2', email='other2@test.com', password='p',
+        )
         other_cart = self._create_cart(user=other_user)
         with self.assertRaises(NotFound):
             CartService.remove_item(other_cart, self.item.pk)
@@ -213,6 +287,10 @@ class RemoveItemTests(CartTestCase):
         with self.assertRaises(NotFound):
             CartService.remove_item(self.cart, self.item.pk)
 
+
+# ==============================================================
+# clear
+# ==============================================================
 
 class ClearCartTests(CartTestCase):
 
@@ -229,12 +307,29 @@ class ClearCartTests(CartTestCase):
         CartService.clear(cart)
         self.assertEqual(cart.items.count(), 0)
 
+    def test_clear_then_add(self):
+        """После очистки можно снова добавить товар."""
+        cart = self._create_cart()
+        self._add_item(cart, self.variant_a, 2)
+        CartService.clear(cart)
+        item = CartService.add_item(cart, self.variant_b.pk, 1)
+        self.assertEqual(item.quantity, 1)
+        self.assertEqual(cart.items.count(), 1)
+
+
+# ==============================================================
+# merge_guest_into_user_cart
+# ==============================================================
 
 class MergeCartTests(CartTestCase):
 
     def setUp(self):
-        self.guest_cart = self._create_cart(user=None, session_key='merge-session')
-        self.user2 = User.objects.create_user(username='buyer2', email='buyer2@test.com', password='p')
+        self.guest_cart = self._create_cart(
+            user=None, session_key='merge-session',
+        )
+        self.user2 = User.objects.create_user(
+            username='buyer2', email='buyer2@test.com', password='p',
+        )
 
     def test_merge_guest_into_user(self):
         self._add_item(self.guest_cart, self.variant_a, 2)
@@ -292,7 +387,6 @@ class MergeCartTests(CartTestCase):
             primary_category=self.root_cat,
             status=ProductStatus.ARCHIVED,
         )
-        from apps.catalog.models import ProductVariant
         variant = ProductVariant.objects.create(
             product=archived_product,
             sku='SKU-MERGE-ARCHIVED',
@@ -308,7 +402,9 @@ class MergeCartTests(CartTestCase):
         """Повторный merge после деактивации — None (нет гостевой)."""
         self._add_item(self.guest_cart, self.variant_a, 1)
         CartService.merge_guest_into_user_cart('merge-session', self.user2)
-        result = CartService.merge_guest_into_user_cart('merge-session', self.user2)
+        result = CartService.merge_guest_into_user_cart(
+            'merge-session', self.user2,
+        )
         self.assertIsNone(result)
 
     def test_merge_creates_user_cart_if_none(self):
@@ -320,3 +416,21 @@ class MergeCartTests(CartTestCase):
         self.assertEqual(user_cart.user, self.user2)
         self.assertTrue(user_cart.is_active)
 
+    def test_merge_with_stock_limits_quantity(self):
+        """Stock ограничивает количество при merge."""
+        self._create_stock(self.variant_a, quantity=3)
+        self._add_item(self.guest_cart, self.variant_a, 5)
+        user_cart = CartService.merge_guest_into_user_cart(
+            'merge-session', self.user2,
+        )
+        item = CartItem.objects.get(cart=user_cart, variant=self.variant_a)
+        self.assertEqual(item.quantity, 3)  # min(5, stock=3)
+
+    def test_merge_empty_guest_cart(self):
+        """Пустая гостевая корзина — merge деактивирует её, юзерская пуста."""
+        user_cart = CartService.merge_guest_into_user_cart(
+            'merge-session', self.user2,
+        )
+        self.guest_cart.refresh_from_db()
+        self.assertFalse(self.guest_cart.is_active)
+        self.assertEqual(user_cart.items.count(), 0)

@@ -111,12 +111,12 @@ WSGI_APPLICATION = "config.wsgi.application"
 DATABASES = {
     "default": {
         # PostgreSQL — production БД. Требует запущенный сервер.
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": "amazone_clone",
-        "USER": "postgres",
-        "PASSWORD": "Postgres123!",
-        "HOST": "localhost",
-        "PORT": "5432",
+        # "ENGINE": "django.db.backends.postgresql",
+        # "NAME": "amazone_clone",
+        # "USER": "postgres",
+        # "PASSWORD": "Postgres123!",
+        # "HOST": "localhost",
+        # "PORT": "5432",
 
         # SQLite — для локальной разработки и тестов без PostgreSQL.
         # Ограничения SQLite:
@@ -124,8 +124,8 @@ DATABASES = {
         #   • Нет partial unique indexes (UniqueConstraint.condition → эмуляция)
         #   • Нет GinIndex / SearchVectorField
         # Для production — ТОЛЬКО PostgreSQL!
-        # "ENGINE": "django.db.backends.sqlite3",
-        # "NAME": os.path.join(BASE_DIR, "db.sqlite3"),
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": os.path.join(BASE_DIR, "db.sqlite3"),
     }
 }
 

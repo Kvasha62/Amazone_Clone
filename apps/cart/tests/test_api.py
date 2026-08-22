@@ -1,6 +1,8 @@
 """
 Тесты API endpoints корзины.
 """
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework import status
@@ -48,7 +50,6 @@ class CartGetTests(CartAPITestCase):
 
     def test_get_cart_total_is_decimal(self):
         """total для пустой корзины — Decimal('0.00')."""
-        from decimal import Decimal
         resp = self.client.get('/api/v1/cart/')
         self.assertEqual(resp.data['total'], Decimal('0.00'))
 
@@ -69,7 +70,9 @@ class CartGetTests(CartAPITestCase):
         self._add_item(cart, self.variant_a, 1)
         resp = self.client.get('/api/v1/cart/')
         item = resp.data['items'][0]
-        expected_fields = {'id', 'product_name', 'sku', 'price', 'quantity', 'total_price'}
+        expected_fields = {
+            'id', 'product_name', 'sku', 'price', 'quantity', 'total_price',
+        }
         self.assertEqual(set(item.keys()), expected_fields)
 
     def test_get_cart_item_shows_product_name(self):
@@ -185,7 +188,18 @@ class CartAddItemTests(CartAPITestCase):
             'variant_id': self.variant_a.pk,
             'quantity': 1,
         }, format='json')
-        self.assertTrue(Cart.objects.filter(user=self.user, is_active=True).exists())
+        self.assertTrue(
+            Cart.objects.filter(user=self.user, is_active=True).exists(),
+        )
+
+    def test_add_with_stock_limit(self):
+        """Превышение stock → 400."""
+        self._create_stock(self.variant_a, quantity=2)
+        resp = self.client.post('/api/v1/cart/items/', {
+            'variant_id': self.variant_a.pk,
+            'quantity': 5,
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
 
 # ==========================================================
@@ -217,7 +231,9 @@ class CartUpdateItemTests(CartAPITestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_update_not_owned_item(self):
-        other_user = User.objects.create_user(username='other', email='other@test.com', password='p')
+        other_user = User.objects.create_user(
+            username='other', email='other@test.com', password='p',
+        )
         other_cart = Cart.objects.create(user=other_user, is_active=True)
         other_item = CartItem.objects.create(
             cart=other_cart, variant=self.variant_a, quantity=1,
@@ -261,7 +277,9 @@ class CartRemoveItemTests(CartAPITestCase):
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_remove_not_owned_item(self):
-        other_user = User.objects.create_user(username='other2', email='other2@test.com', password='p')
+        other_user = User.objects.create_user(
+            username='other2', email='other2@test.com', password='p',
+        )
         other_cart = Cart.objects.create(user=other_user, is_active=True)
         other_item = CartItem.objects.create(
             cart=other_cart, variant=self.variant_a, quantity=1,
