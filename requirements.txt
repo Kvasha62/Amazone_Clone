@@ -1,0 +1,50 @@
+# ────────────────────────────────────────────────────────────────────────
+# requirements.txt — зависимости проекта AmazonClone.
+#
+# УСТАНОВКА:
+#   pip install -r requirements.txt
+#
+# PostgreSQL adapter:
+#   psycopg3 (psycopg[binary]) — РЕКОМЕНДУЕТСЯ (Django 4.2+).
+#     • Современный, активная разработка, встроенный пул соединений.
+#     • Django автоматически определяет psycopg3 vs psycopg2.
+#   psycopg2-binary — FALLBACK (устаревший, без новых фич).
+#
+# Python 3.15: psycopg[binary] может не иметь wheel'ов.
+#   Вариант 1: pip install "psycopg[c]>=3.3"  (C-расширение, сборка из исходников)
+#   Вариант 2: pip install "psycopg>=3.3"     (pure Python, медленнее, но работает)
+#   Вариант 3: Использовать Python 3.14 (официально поддерживается Django 6.1)
+# ────────────────────────────────────────────────────────────────────────
+
+# Django + REST Framework
+Django>=6.1,<7.0
+djangorestframework>=3.18
+djangorestframework-simplejwt>=5.3
+django-filter>=23.0
+drf-spectacular>=0.30
+django-cors-headers>=4.3
+
+# PostgreSQL adapter — psycopg3 (РЕКОМЕНДУЕТСЯ для Django 4.2+)
+# Django автоматически определяет: если установлен psycopg3 → использует его,
+# иначе fallback на psycopg2.
+# ⚠️ Для Python 3.15: бинарных wheel'ов может не быть.
+#   В этом случае установите: pip install "psycopg[c]>=3.3"
+#   (требуется libpq — PostgreSQL dev headers, см. SETUP_GUIDE.md)
+psycopg[binary]>=3.3
+
+# psycopg2-binary — FALLBACK (если psycopg3 не устанавливается)
+# Раскомментируйте строку ниже и ЗАКОММЕНТИРУЙТЕ psycopg[binary] выше:
+# psycopg2-binary>=2.9
+
+# Tree structure (Category hierarchy)
+django-treebeard>=4.7.1
+
+# .env support
+python-dotenv>=1.0
+
+# Pillow (ImageField for products, brands)
+Pillow>=10.0
+
+# Celery + Redis (фоновые задачи)
+celery[redis]>=5.4
+redis>=5.0

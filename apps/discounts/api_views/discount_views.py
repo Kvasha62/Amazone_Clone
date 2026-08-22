@@ -1,0 +1,136 @@
+import logging
+
+from decimal import Decimal
+
+from rest_framework import status
+from rest_framework.exceptions import NotFound
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from apps.discounts.models import Coupon
+from apps.discounts.serializers import (
+    ApplyCouponInputSerializer,
+    CouponListSerializer,
+    CouponSerializer,
+    PreviewDiscountInputSerializer,
+    PreviewDiscountOutputSerializer,
+)
+from apps.discounts.services.discount_service import DiscountService
+from apps.orders.models import Order
+
+try:
+    from drf_spectacular.utils import extend_schema, extend_schema_view
+except ImportError:
+    def extend_schema(**kwargs):
+        def decorator(func): return func
+        return decorator
+    def extend_schema_view(**kwargs):
+        def decorator(cls): return cls
+        return decorator
+
+logger = logging.getLogger(__name__)
+
+
+@extend_schema_view(
+    get=extend_schema(
+        summary='Список купонов (staff)',
+        responses={200: CouponListSerializer(many=True)},
+    ),
+)
+class CouponListView(APIView):
+    """GET /api/v1/discounts/coupons/ — список активных купонов (staff)."""
+    permission_classes = (IsAdminUser,)
+
+    def get(self, request):
+        coupons = Coupon.objects.valid_now().with_campaign()
+        serializer = CouponListSerializer(coupons, many=True)
+        return Response(serializer.data)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        summary='Применить купон',
+        request=ApplyCouponInputSerializer,
+        responses={200: 'Discount applied'},
+    ),
+)
+class CouponApplyView(APIView):
+    """POST /api/v1/discounts/apply/"""
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request):
+        input_ser = ApplyCouponInputSerializer(data=request.data)
+        input_ser.is_valid(raise_exception=True)
+        data = input_ser.validated_data
+
+        try:
+            order = Order.objects.get(pk=data['order_id'], user=request.user)
+        except Order.DoesNotExist:
+            raise NotFound('Заказ не найден.')
+
+        order = DiscountService.apply_coupon(
+            order, data['code'], user=request.user,
+        )
+
+        return Response({
+            'order_id': order.pk,
+            'discount': str(order.discount),
+            'total': str(order.total),
+        })
+
+
+@extend_schema_view(
+    post=extend_schema(
+        summary='Снять скидку',
+        responses={200: 'Discount removed'},
+    ),
+)
+class CouponRemoveView(APIView):
+    """POST /api/v1/discounts/remove/"""
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request):
+        order_id = request.data.get('order_id')
+        if not order_id:
+            return Response(
+                {'order_id': 'Обязательное поле.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            order = Order.objects.get(pk=order_id, user=request.user)
+        except Order.DoesNotExist:
+            raise NotFound('Заказ не найден.')
+
+        order = DiscountService.remove_coupon(order)
+
+        return Response({
+            'order_id': order.pk,
+            'discount': str(order.discount),
+            'total': str(order.total),
+        })
+
+
+@extend_schema_view(
+    post=extend_schema(
+        summary='Превью скидки',
+        request=PreviewDiscountInputSerializer,
+        responses={200: PreviewDiscountOutputSerializer},
+    ),
+)
+class CouponPreviewView(APIView):
+    """POST /api/v1/discounts/preview/ — превью скидки без применения."""
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request):
+        input_ser = PreviewDiscountInputSerializer(data=request.data)
+        input_ser.is_valid(raise_exception=True)
+        data = input_ser.validated_data
+
+        result = DiscountService.preview_discount(
+            code=data['code'],
+            order_amount=data['order_amount'],
+        )
+
+        return Response(PreviewDiscountOutputSerializer(result).data)

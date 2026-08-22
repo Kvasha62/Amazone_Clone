@@ -1,0 +1,23 @@
+# ────────────────────────────────────────────────────────────────────────
+# Dockerfile.backend — Django API
+# ────────────────────────────────────────────────────────────────────────
+FROM python:3.13-slim
+
+# Системные зависимости для psycopg3 и Pillow
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libpq-dev libjpeg-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Установка Python-зависимостей (кэш слоя Docker)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir celery redis
+
+# Копируем исходный код (при разработке — volume перезапишет)
+COPY . .
+
+EXPOSE 8000
+
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

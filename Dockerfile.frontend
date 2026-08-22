@@ -1,0 +1,17 @@
+# ────────────────────────────────────────────────────────────────────────
+# Dockerfile.frontend — React + Vite
+# ────────────────────────────────────────────────────────────────────────
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Копируем package.json для кэша слоя
+COPY package.json package-lock.json* ./
+RUN npm install
+
+# Копируем исходный код (при разработке — volume перезапишет)
+COPY . .
+
+EXPOSE 5173
+
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

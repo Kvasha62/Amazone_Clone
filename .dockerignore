@@ -1,0 +1,42 @@
+# ────────────────────────────────────────────────────────────────────────
+# .dockerignore — исключаем из контекста сборки Docker
+# ────────────────────────────────────────────────────────────────────────
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Docker
+.docker/
+
+# Git
+.git/
+.gitignore
+
+# Документация (не нужна в контейнере)
+*.md
+*.pdf
+*.html
+
+# Медиа (примонтируем через volume)
+uploads/
+
+# SQLite (используем PostgreSQL в Docker)
+db.sqlite3
+
+# Окружение
+.env

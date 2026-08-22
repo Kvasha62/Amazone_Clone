@@ -1,0 +1,103 @@
+# ──────────────────────────────────────────────────────────────
+# .gitignore — Amazone Clone (Django + React)
+# ──────────────────────────────────────────────────────────────
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── pip cache ──
+.cache/
+
+# ── Virtual environments ──
+.venv/
+venv/
+ENV/
+
+# ── Django ──
+db.sqlite3
+db.sqlite3-journal
+media/
+uploads/
+
+# ── Environment ──
+.env
+.env.local
+.env.production
+
+# ── IDE ──
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Node.js / Frontend ──
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.vite/
+
+# ── Coverage ──
+htmlcov/
+.coverage
+.coverage.*
+coverage/
+
+# ── Docker ──
+.docker/
+
+# ── Logs ──
+*.log
+
+# ── Celery ──
+celerybeat-schedule
+celerybeat.pid
+
+# ── Static files (collected) ──
+staticfiles/
+
+# ── Deploy helper scripts (not part of repo) ──
+deploy_*
+
+# ── Archives (delivery files, not part of repo) ──
+*.zip
+*.bundle
+*.tar.gz
+fill_repo.ps1
+fix_*.ps1
+generate_pdf.py
+test_register.py
+orders_serializers_fix.py
+frontend-router.tsx
+
+# ── Generated docs ──
+*.pdf
+!requirements.txt
+CATALOG_REFERENCE.html
+REACT_GUIDE.html
+TEXTBOOK.html
+BACKEND_REVIEW_ANALYSIS.md
+COMPATIBILITY_REPORT.md
+POPULATE_ADMIN_FIX.md
+REACT_READINESS_REPORT.md
+WORKSPACE_VS_REPO_ANALYSIS.md
+API_REFERENCE.md
+SETUP_GUIDE.md
+TEXTBOOK.md
+
+# ── Next steps ──
+frontend/NEXT_STEPS.md

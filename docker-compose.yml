@@ -1,0 +1,148 @@
+# ────────────────────────────────────────────────────────────────────────
+# docker-compose.yml — Amazon Clone
+#
+# Локальная разработка: PostgreSQL 18 + Redis 7 + Django + React
+#
+# Запуск:
+#   docker compose up -d              — запустить всё
+#   docker compose up -d db redis     — только БД + Redis
+#   docker compose logs -f backend    — логи Django
+#   docker compose down               — остановить
+#
+# ⚠️  Для production используйте отдельный docker-compose.prod.yml
+#     с gunicorn, nginx, health checks, resource limits.
+# ────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── PostgreSQL 18 ──
+  db:
+    image: postgres:18
+    container_name: amazon-clone-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-amazonclone}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis 7 (кэш + Celery broker) ──
+  redis:
+    image: redis:7-alpine
+    container_name: amazon-clone-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Django backend ──
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: amazon-clone-backend
+    restart: unless-stopped
+    environment:
+      DB_ENGINE: django.db.backends.postgresql
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-amazonclone}
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me-in-production}
+      DJANGO_DEBUG: "True"
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app                    # live-reload при разработке
+      - media:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+
+  # ── Celery worker ──
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: amazon-clone-celery
+    restart: unless-stopped
+    environment:
+      DB_ENGINE: django.db.backends.postgresql
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-amazonclone}
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me-in-production}
+      DJANGO_DEBUG: "True"
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - .:/app
+      - media:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A config worker --loglevel=info
+
+  # ── Celery beat (периодические задачи) ──
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: amazon-clone-celery-beat
+    restart: unless-stopped
+    environment:
+      DB_ENGINE: django.db.backends.postgresql
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-amazonclone}
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me-in-production}
+      DJANGO_DEBUG: "True"
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - .:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A config beat --loglevel=info
+
+  # ── React frontend ──
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    container_name: amazon-clone-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules      # не перезаписываем node_modules хостом
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  media:
