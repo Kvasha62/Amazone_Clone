@@ -363,3 +363,18 @@ if _is_testing:
 #
 # 📖 https://en.wikipedia.org/wiki/HMAC
 PAYMENT_WEBHOOK_SECRET = os.getenv("PAYMENT_WEBHOOK_SECRET", "")
+
+# ==========================================================
+# Email Configuration
+# ==========================================================
+# Development: console backend (prints emails to stdout)
+# Production: SMTP or django-anymail (set EMAIL_BACKEND in .env)
+#
+# NEVER commit real SMTP credentials to the repository.
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend" if DEBUG
+    else "django.core.mail.backends.smtp.EmailBackend",
+)
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@amazone-clone.local")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")

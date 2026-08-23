@@ -86,11 +86,14 @@ class RegisterView(APIView):
     def post(self, request):
         input_ser = RegisterInputSerializer(data=request.data)
         if not input_ser.is_valid():
-            # 🔴 Логируем ошибку валидации — чтобы видеть причину в консоли
+            # 🔴 Логируем только ошибки валидации БЕЗ password/password_confirm
             import logging
             logger = logging.getLogger(__name__)
-            logger.warning(f"Register validation error: {input_ser.errors}")
-            logger.warning(f"Register request data: {request.data}")
+            safe_errors = {
+                k: v for k, v in input_ser.errors.items()
+                if k not in ('password', 'password_confirm')
+            }
+            logger.warning("Register validation error: %s", safe_errors)
         input_ser.is_valid(raise_exception=True)
         data = input_ser.validated_data
 

@@ -108,3 +108,52 @@ def send_order_shipped(order_id: int):
     )
 
     send_email_notification.delay(notif.pk)
+
+
+@shared_task(name='apps.notifications.tasks.send_password_reset_email')
+def send_password_reset_email(user_id: int, uid: str, token: str):
+    """
+    Асинхронная отправка password reset email.
+
+    Args:
+        user_id: PK пользователя
+        uid: base64-кодировка PK (для ссылки)
+        token: Django PasswordResetTokenGenerator token
+
+    🔴 Token передаётся как аргумент задачи, но НИКОГДА не логируется.
+    Token хранится только в Celery message (Redis broker),
+    который должен быть защищён отдельно.
+    """
+    from django.core.mail import send_mail
+    from django.conf import settings
+    from apps.users.models import User
+
+    try:
+        user = User.objects.get(pk=user_id, is_active=True)
+    except User.DoesNotExist:
+        # 🔴 Не логируем подробности — не раскрываем информацию
+        return
+
+    # Формируем ссылку сброса (frontend route)
+    reset_url = (
+        f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')}"
+        f"/forgot-password?uid={uid}&token={token}"
+    )
+
+    send_mail(
+        subject='Сброс пароля — Amazone Clone',
+        message=(
+            f'Здравствуйте, {user.get_full_name() or user.username}!\n\n'
+            f'Вы запросили сброс пароля.\n'
+            f'Перейдите по ссылке для установки нового пароля:\n'
+            f'{reset_url}\n\n'
+            f'Если вы не запрашивали сброс пароля, проигнорируйте это письмо.\n'
+            f'Ссылка действительна 3 дня.'
+        ),
+        from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@amazone-clone.local'),
+        recipient_list=[user.email],
+        fail_silently=True,
+    )
+
+    # 🔴 НЕ логируем token, uid, или ссылку
+    logger.info('Password reset email sent for user %s', user_id)

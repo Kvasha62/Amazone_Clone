@@ -18,6 +18,8 @@
 #   - Token действует 3 дня (PASSWORD_RESET_TIMEOUT = 259200)
 #   - Email не раскрывает существование аккаунта (всегда 200)
 #   - UID — base64-кодировка PK пользователя
+#   - 🔴 Token и UID+token НИКОГДА не логируются
+#   - 🔴 Пароль НИКОГДА не логируется
 #
 # 📖 https://docs.djangoproject.com/en/stable/topics/auth/default/#resetting-passwords
 # ────────────────────────────────────────────────────────────────────────
@@ -104,15 +106,52 @@ class PasswordResetRequestView(APIView):
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
 
-            # TODO: Отправить email через Celery task
-            # send_password_reset_email.delay(user.pk, uid, token)
-            logger.info(
-                'Password reset requested for user %s (uid=%s, token=%s)',
-                user.pk, uid, token,
-            )
+            # Отправляем email через Celery task (если Celery доступен)
+            # Fallback: отправляем синхронно через Django email backend
+            try:
+                from apps.notifications.tasks import send_password_reset_email
+                send_password_reset_email.delay(user.pk, uid, token)
+            except Exception:
+                # Celery не доступен — отправляем синхронно
+                self._send_reset_email_sync(user, uid, token)
+
+            # 🔴 НЕ логируем token, uid, или ссылку с токеном
+            logger.info('Password reset requested for user %s', user.pk)
 
         # Всегда 200 — не утекает информация
         return Response({'detail': 'Если email существует, письмо отправлено.'})
+
+    @staticmethod
+    def _send_reset_email_sync(user, uid: str, token: str):
+        """
+        Синхронная отправка password reset email.
+
+        Использует Django email backend (console в dev, SMTP в prod).
+        Token передаётся в контекст шаблона, но НЕ логируется.
+        """
+        from django.core.mail import send_mail
+        from django.conf import settings
+
+        # Формируем ссылку сброса (frontend route)
+        reset_url = (
+            f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')}"
+            f"/forgot-password?uid={uid}&token={token}"
+        )
+
+        send_mail(
+            subject='Сброс пароля — Amazone Clone',
+            message=(
+                f'Здравствуйте, {user.get_full_name() or user.username}!\n\n'
+                f'Вы запросили сброс пароля.\n'
+                f'Перейдите по ссылке для установки нового пароля:\n'
+                f'{reset_url}\n\n'
+                f'Если вы не запрашивали сброс пароля, проигнорируйте это письмо.\n'
+                f'Ссылка действительна 3 дня.'
+            ),
+            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@amazone-clone.local'),
+            recipient_list=[user.email],
+            fail_silently=True,
+        )
 
 
 @extend_schema(
@@ -155,9 +194,11 @@ class PasswordResetConfirmView(APIView):
             )
 
         # Устанавливаем новый пароль
+        # 🔴 User наследует AbstractUser (НЕ BaseModel) — НЕТ updated_at
         user.set_password(new_password)
-        user.save(update_fields=['password', 'updated_at'])
+        user.save(update_fields=['password'])
 
+        # 🔴 НЕ логируем token или пароль
         logger.info('Password reset confirmed for user %s', user.pk)
 
         return Response({'detail': 'Пароль успешно изменён.'})
