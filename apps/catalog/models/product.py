@@ -146,28 +146,18 @@ class Product(BaseModel):
     # ==================================================================
 
     # SearchVectorField — PostgreSQL full-text search (tsvector).
-    # На SQLite → TextField (без GIN-индекса, поиск через __icontains).
-    # На PostgreSQL → SearchVectorField + GinIndex = мгновенный поиск.
-    if _HAS_POSTGRES:
-        search_vector = SearchVectorField(
-            verbose_name='Поисковый вектор',
-            null=True,
-            blank=True,
-            editable=False,
-            help_text=(
-                'Автоматически обновляется через trigger / celery. '
-                'Не редактировать вручную.'
-            ),
-        )
-    else:
-        # SQLite fallback: обычный TextField для хранения поискового текста
-        search_vector = models.TextField(
-            verbose_name='Поисковый текст (SQLite fallback)',
-            null=True,
-            blank=True,
-            editable=False,
-            default='',
-        )
+    # GIN-индекс делает поиск мгновенным:
+    #   WHERE search_vector @@ to_tsquery('iphone') → Index Scan.
+    search_vector = SearchVectorField(
+        verbose_name='Поисковый вектор',
+        null=True,
+        blank=True,
+        editable=False,
+        help_text=(
+            'Автоматически обновляется через trigger / celery. '
+            'Не редактировать вручную.'
+        ),
+    )
 
     # ==================================================================
     # SEO-поля
@@ -459,12 +449,11 @@ class Product(BaseModel):
             ),
         ]
 
-        # ── PostgreSQL-only: partial indexes + GIN ──
-        # Partial indexes (condition=...) и GinIndex поддерживаются
-        # ТОЛЬКО PostgreSQL. На SQLite они вызывают ошибку при миграции.
-        # Поэтому добавляем их динамически, только если PostgreSQL.
-        if _HAS_POSTGRES and GinIndex is not None:
-            indexes.extend([
+        # ── PostgreSQL partial indexes + GIN ──
+        # Partial indexes (condition=...) оптимизируют частые фильтры:
+        # только активные товары (status='active').
+        # GinIndex — мгновенный полнотекстовый поиск.
+        indexes.extend([
                 # Partial: «активные товары в категории X»
                 models.Index(
                     fields=['status', 'primary_category'],
