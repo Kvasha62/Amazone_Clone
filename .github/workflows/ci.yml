@@ -1,20 +1,20 @@
 # ────────────────────────────────────────────────────────────────────────
-# .github/workflows/ci.yml — CI Foundation for Amazone_Clone
+# .github/workflows/ci.yml — CI for Amazone_Clone
 #
 # Triggers:
 #   - push to main
 #   - pull_request targeting main
 #
 # Jobs:
-#   1. Django system checks    (python manage.py check)
-#   2. Migration check         (python manage.py makemigrations --check)
-#   3. Test suite              (python manage.py test)
+#   1. sqlite   — Django checks + migration check + test suite (SQLite)
+#   2. postgres — Django checks + migration check + test suite (PostgreSQL 18)
 #
-# Database: SQLite (no PostgreSQL service needed).
-# PostgreSQL-only tests are automatically skipped via @skipIf.
+# PostgreSQL-specific tests (SearchVectorSignalTests) are skipped on
+# SQLite and run on PostgreSQL.
 #
 # Python: 3.13 (matches production)
 # Django: 6.1 (installed from requirements.txt)
+# PostgreSQL: 18 (matches docker-compose.yml)
 # ────────────────────────────────────────────────────────────────────────
 
 name: CI
@@ -26,7 +26,8 @@ on:
     branches: [main]
 
 jobs:
-  ci:
+  # ── Job 1: SQLite ──────────────────────────────────────────────────────
+  sqlite:
     runs-on: ubuntu-latest
 
     env:
@@ -34,6 +35,58 @@ jobs:
       DB_ENGINE: ""
       DJANGO_SECRET_KEY: "ci-insecure-key-do-not-use-in-production"
       DJANGO_DEBUG: "False"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Django system checks
+        run: python manage.py check --fail-level WARNING
+
+      - name: Migration check
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Run tests
+        run: python manage.py test --verbosity 2
+
+  # ── Job 2: PostgreSQL 18 ──────────────────────────────────────────────
+  postgres:
+    runs-on: ubuntu-latest
+
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DB_ENGINE: "django.db.backends.postgresql"
+      DB_NAME: "amazonclone"
+      DB_USER: "postgres"
+      DB_PASSWORD: "postgres"
+      DB_HOST: "localhost"
+      DB_PORT: "5432"
+      DJANGO_SECRET_KEY: "ci-insecure-key-do-not-use-in-production"
+      DJANGO_DEBUG: "False"
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: amazonclone
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout repository
