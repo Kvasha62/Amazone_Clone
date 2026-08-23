@@ -1,7 +1,9 @@
 # Architecture — Amazone Clone
 
-> E-commerce platform built on **Django + DRF** backend and
-> **React + Vite** frontend.  The design follows a **Service Layer**
+> E-commerce platform with a **Django + DRF** backend.
+> A **React + Vite** frontend is planned and documented in
+> `frontend-guide/`, but its source is not yet committed.
+> The design follows a **Service Layer**
 > pattern with concurrency-safe state transitions.
 
 ---
@@ -34,7 +36,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         React SPA                               │
+│               React SPA — PLANNED, not yet committed            │
 │  Vite · TypeScript · Tailwind · Zustand                         │
 │  react-router-dom · Axios (JWT interceptor)                     │
 └──────────────────────────┬──────────────────────────────────────┘
@@ -610,7 +612,7 @@ All list endpoints use `PageNumberPagination` with `PAGE_SIZE = 20`.
 
 ### Frontend Interceptor
 
-The React API client (`client.ts`) uses an Axios interceptor that:
+The planned React API client (`client.ts`) will use an Axios interceptor that:
 - Attaches the JWT `access` token to every request
 - On 401 response, attempts silent refresh via the `refresh` token
 - On refresh failure, redirects to `/login`
@@ -893,10 +895,11 @@ tests/
 └── test_signals.py       # Signal handlers
 ```
 
-### Frontend
+### Frontend (planned)
 
 - Vitest + React Testing Library + MSW (Mock Service Worker)
 - Test files in `__tests__/` directories and `*.test.ts` files
+- Not yet implemented — will be added when frontend source is committed
 
 ---
 
@@ -913,9 +916,9 @@ python manage.py migrate
 python manage.py createsuperuser
 python manage.py runserver
 
-# Frontend (via cmd.exe — PowerShell may block npm)
-cmd /c "npm install"
-cmd /c "npm run dev"
+# Frontend — planned, not yet committed (via cmd.exe — PowerShell may block npm)
+# cmd /c "npm install"
+# cmd /c "npm run dev"
 ```
 
 ### Docker
