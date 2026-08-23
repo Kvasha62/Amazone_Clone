@@ -25,9 +25,9 @@
 13. [Async Tasks (Celery)](#async-tasks-celery)
 14. [Full-Text Search](#full-text-search)
 15. [Frontend Architecture](#frontend-architecture)
-15. [Docker & Infrastructure](#docker--infrastructure)
-16. [Testing Strategy](#testing-strategy)
-17. [Deployment](#deployment)
+16. [Docker & Infrastructure](#docker--infrastructure)
+17. [Testing Strategy](#testing-strategy)
+18. [Deployment](#deployment)
 19. [Future Direction](#future-direction)
 
 ---
