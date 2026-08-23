@@ -13,21 +13,20 @@
 3. [Project Structure](#project-structure)
 4. [Architectural Principles](#architectural-principles)
 5. [Domain Ownership](#domain-ownership)
-6. [Domain Dependency Rules](#domain-dependency-rules)
-7. [Historical Snapshot Invariants](#historical-snapshot-invariants)
-8. [Django Apps — Current Implementation](#django-apps--current-implementation)
-9. [Data Model](#data-model)
-10. [API Reference](#api-reference)
-11. [Authentication & Authorization](#authentication--authorization)
-12. [Concurrency & Transaction Safety](#concurrency--transaction-safety)
-13. [Cross-Domain Coordination](#cross-domain-coordination)
-14. [Async Tasks (Celery)](#async-tasks-celery)
-15. [Full-Text Search](#full-text-search)
-16. [Frontend Architecture](#frontend-architecture)
-17. [Docker & Infrastructure](#docker--infrastructure)
-18. [Testing Strategy](#testing-strategy)
-19. [Deployment](#deployment)
-20. [Future Direction](#future-direction)
+6. [Historical Snapshot Invariants](#historical-snapshot-invariants)
+7. [Django Apps — Current Implementation](#django-apps--current-implementation)
+8. [Data Model](#data-model)
+9. [API Reference](#api-reference)
+10. [Authentication & Authorization](#authentication--authorization)
+11. [Concurrency & Transaction Safety](#concurrency--transaction-safety)
+12. [Cross-Domain Coordination](#cross-domain-coordination)
+13. [Async Tasks (Celery)](#async-tasks-celery)
+14. [Full-Text Search](#full-text-search)
+15. [Frontend Architecture](#frontend-architecture)
+15. [Docker & Infrastructure](#docker--infrastructure)
+16. [Testing Strategy](#testing-strategy)
+17. [Deployment](#deployment)
+19. [Future Direction](#future-direction)
 
 ---
 
@@ -196,7 +195,10 @@ Request → View → Serializer (validation) → Service (business logic) → OR
 - **Serializers** validate input and format output — no business rules.
 - **Services** contain all business rules: state transitions, stock
   reservation, payment processing, order creation.
-- **ORM** is accessed only from services.
+- **ORM**: Business mutations and state transitions are performed by
+  services. Query/read logic may live in QuerySets or Managers, but
+  business rules and cross-domain state changes must not be
+  implemented there.
 
 📖 [Martin Fowler — Service Layer](https://martinfowler.com/eaaCatalog/serviceLayer.html)
 
@@ -634,7 +636,7 @@ state** — rows where a lost update would violate a business invariant
 |------------------------------------|----------------------------------------|
 | Creating a `Review`                | UniqueConstraint on user+product is sufficient |
 | Updating `UserProfile`             | Single-user state, no contention       |
-| Creating a `WishlistItem`          | UniqueConstraint is sufficient          |
+| Creating a `WishlistItem`          | The database uniqueness constraint protects the invariant; the service must handle concurrent IntegrityError appropriately |
 
 ### Pattern: `@transaction.atomic` + `select_for_update()`
 
