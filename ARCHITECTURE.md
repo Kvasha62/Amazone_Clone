@@ -67,7 +67,7 @@
 
 | Layer          | Technology                         |
 |----------------|------------------------------------|
-| Language       | Python ≥ 3.13                      |
+| Language       | Python ≥ 3.13 (3.14 recommended for Django 6.1)                      |
 | Framework      | Django ≥ 6.1, < 7.0                |
 | API            | Django REST Framework ≥ 3.18       |
 | Auth           | djangorestframework-simplejwt ≥ 5.3|
@@ -81,7 +81,10 @@
 | Task Queue     | celery[redis] ≥ 5.4                |
 | Images         | Pillow ≥ 10.0                      |
 
-### Frontend (versions per `package.json`)
+### Frontend (planned; versions per `package.json` — not yet in repository)
+
+> The frontend is planned. `package.json` does not yet exist in this
+> repository. The versions below are the target.
 
 | Layer          | Technology                         |
 |----------------|------------------------------------|
@@ -131,7 +134,11 @@ Amazone_Clone/                   # Backend root (Django project)
 ├── docker-compose.yml
 └── .dockerignore
 
-frontend/                        # Frontend root (React SPA)
+> **Current state:** frontend source is not committed yet. The structure
+> below is the planned target; the build is documented step-by-step in
+> `frontend-guide/`.
+
+frontend/                        # Frontend root (React SPA) — PLANNED, not yet committed
 ├── src/
 │   ├── api/                     # API client modules (Axios + JWT interceptor)
 │   ├── app/                     # App entry, providers, router
@@ -497,7 +504,7 @@ for development only.
 User ──1:N── Address
   │
   ├──1:1── UserProfile
-  ├──1:1── Wishlist ──1:N── WishlistItem ──→ Product
+  ├──1:1── Wishlist ──1:N── WishlistItem ──→ ProductVariant
   ├──1:N── Cart ──1:N── CartItem ──→ ProductVariant ──→ Price
   ├──1:N── Order ──1:N── OrderItem ──→ ProductVariant
   ├──1:N── Review ──→ Product
@@ -534,7 +541,8 @@ Stock ──1:N── StockMovement (audit)
 | `inventory_stock`  | `stock_quantity_non_negative`               | Quantity ≥ 0                   |
 | `payments_payment` | `payment_refund_lte_amount`                 | Refund cannot exceed payment   |
 
-> All constraints use `CheckConstraint(condition=...)`.
+> Uniqueness invariants use `UniqueConstraint`; range/validity invariants
+> use `CheckConstraint(condition=...)`.
 
 ---
 
@@ -741,6 +749,10 @@ so that:
 | `cart`    | `apps.cart.tasks.*`         |
 | `reviews` | `apps.reviews.tasks.*`      |
 
+> Routing for `orders` and `reviews` queues is configured in
+> `config/celery.py`, but only `cart` tasks are currently implemented
+> (`cleanup_old_carts`, `send_abandoned_cart_reminders`).
+
 ---
 
 ## Full-Text Search
@@ -765,6 +777,10 @@ uses `__icontains` instead.
 ---
 
 ## Frontend Architecture
+
+> **Current state:** the React frontend is planned and documented in
+> `frontend-guide/`; no frontend source is committed to this repository yet.
+> The sections below describe the target architecture, not current code.
 
 ### State Management (Zustand)
 
