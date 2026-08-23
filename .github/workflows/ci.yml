@@ -1,0 +1,58 @@
+# ────────────────────────────────────────────────────────────────────────
+# .github/workflows/ci.yml — CI Foundation for Amazone_Clone
+#
+# Triggers:
+#   - push to main
+#   - pull_request targeting main
+#
+# Jobs:
+#   1. Django system checks    (python manage.py check)
+#   2. Migration check         (python manage.py makemigrations --check)
+#   3. Test suite              (python manage.py test)
+#
+# Database: SQLite (no PostgreSQL service needed).
+# PostgreSQL-only tests are automatically skipped via @skipIf.
+#
+# Python: 3.13 (matches production)
+# Django: 6.1 (installed from requirements.txt)
+# ────────────────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DB_ENGINE: ""
+      DJANGO_SECRET_KEY: "ci-insecure-key-do-not-use-in-production"
+      DJANGO_DEBUG: "False"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Django system checks
+        run: python manage.py check --fail-level WARNING
+
+      - name: Migration check
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Run tests
+        run: python manage.py test --verbosity 2
