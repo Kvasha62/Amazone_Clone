@@ -348,3 +348,18 @@ if _is_testing:
         "anon": None,
         "user": None,
     }
+
+# ==========================================================
+# 🔴 Payment Webhook Security — HMAC-SHA256
+# ==========================================================
+# Secret key for verifying payment provider webhooks.
+# MUST be set in production via environment variable.
+# Without it, all webhook requests are rejected (403).
+#
+# NEVER:
+#   • use Django SECRET_KEY
+#   • hardcode a real secret
+#   • commit a real secret to the repository
+#
+# 📖 https://en.wikipedia.org/wiki/HMAC
+PAYMENT_WEBHOOK_SECRET = os.getenv("PAYMENT_WEBHOOK_SECRET", "")
