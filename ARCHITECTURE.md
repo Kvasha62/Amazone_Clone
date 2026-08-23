@@ -687,13 +687,12 @@ This is the **primary** mechanism for cross-domain coordination.
 
 ### Role of Django Signals
 
-Django signals are used **only** for single-domain side effects
-(where the signal handler and the model belong to the same app):
-
-| Signal                      | Purpose                                    | Same domain? |
-|-----------------------------|--------------------------------------------|--------------|
-| `ProductVariant.post_save`  | Auto-create `Stock` + `Price` rows         | Yes*         |
-| `Review.post_save`          | Update `Product.rating` / `reviews_count`  | No (cross)   |
+Django signals are allowed for local/same-domain housekeeping
+and non-critical denormalization.
+Cross-domain signals are legacy/current exceptions.
+They MUST NOT be introduced for new cross-domain business workflows.
+Existing cross-domain signals must be considered technical debt
+and should be migrated to explicit service calls when practical.
 
 \* `ProductVariant.post_save` creates rows in `inventory` and `pricing`.
 This is a **known cross-domain signal** that should be migrated to an
@@ -984,6 +983,7 @@ confirmation), introduce lightweight domain events dispatched after
 def confirm(order):
     # ... business logic ...
     dispatch_event(OrderConfirmed(order))
+
 
 # Handler (async, via Celery):
 @on_event(OrderConfirmed)
