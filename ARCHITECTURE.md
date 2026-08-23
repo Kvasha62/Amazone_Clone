@@ -1,9 +1,8 @@
 # Architecture — Amazone Clone
 
-> E-commerce platform built on **Django 6.1 + DRF 3.18** backend and
-> **React 19 + Vite 6** frontend.  The design follows a strict
-> **Service Layer** pattern with pessimistic locking for all mutating
-> operations.
+> E-commerce platform built on **Django + DRF** backend and
+> **React + Vite** frontend.  The design follows a **Service Layer**
+> pattern with concurrency-safe state transitions.
 
 ---
 
@@ -13,17 +12,22 @@
 2. [Technology Stack](#technology-stack)
 3. [Project Structure](#project-structure)
 4. [Architectural Principles](#architectural-principles)
-5. [Django Apps](#django-apps)
-6. [Data Model](#data-model)
-7. [API Reference](#api-reference)
-8. [Authentication & Authorization](#authentication--authorization)
-9. [Concurrency & Transaction Safety](#concurrency--transaction-safety)
-10. [Async Tasks (Celery)](#async-tasks-celery)
-11. [Full-Text Search](#full-text-search)
-12. [Frontend Architecture](#frontend-architecture)
-13. [Docker & Infrastructure](#docker--infrastructure)
-14. [Testing Strategy](#testing-strategy)
-15. [Deployment](#deployment)
+5. [Domain Ownership](#domain-ownership)
+6. [Domain Dependency Rules](#domain-dependency-rules)
+7. [Historical Snapshot Invariants](#historical-snapshot-invariants)
+8. [Django Apps — Current Implementation](#django-apps--current-implementation)
+9. [Data Model](#data-model)
+10. [API Reference](#api-reference)
+11. [Authentication & Authorization](#authentication--authorization)
+12. [Concurrency & Transaction Safety](#concurrency--transaction-safety)
+13. [Cross-Domain Coordination](#cross-domain-coordination)
+14. [Async Tasks (Celery)](#async-tasks-celery)
+15. [Full-Text Search](#full-text-search)
+16. [Frontend Architecture](#frontend-architecture)
+17. [Docker & Infrastructure](#docker--infrastructure)
+18. [Testing Strategy](#testing-strategy)
+19. [Deployment](#deployment)
+20. [Future Direction](#future-direction)
 
 ---
 
@@ -31,18 +35,16 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        React 19 SPA                             │
-│  Vite 6 · TypeScript 5.8 · Tailwind 4 · Zustand 5             │
-│  react-router-dom 7 · Axios (JWT interceptor)                  │
+│                         React SPA                               │
+│  Vite · TypeScript · Tailwind · Zustand                         │
+│  react-router-dom · Axios (JWT interceptor)                     │
 └──────────────────────────┬──────────────────────────────────────┘
                            │  HTTP / JSON  (JWT Bearer)
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                     Django 6.1 + DRF 3.18                       │
+│                       Django + DRF                              │
 │                                                                 │
 │  View → Serializer → Service → ORM                             │
-│                     ╷           ╷                                │
-│              @transaction.atomic  select_for_update()           │
 │                                                                 │
 │  ┌──────┐ ┌───────┐ ┌───────┐ ┌───────┐ ┌────────┐ ┌───────┐  │
 │  │users │ │catalog│ │ cart  │ │orders │ │payments│ │reviews │  │
@@ -55,7 +57,6 @@
        ▼              ▼              ▼
 ┌────────────┐ ┌────────────┐ ┌────────────┐
 │ PostgreSQL │ │   Redis    │ │  Celery     │
-│    18      │ │    7       │ │  worker+beat│
 └────────────┘ └────────────┘ └────────────┘
 ```
 
@@ -63,30 +64,34 @@
 
 ## Technology Stack
 
-| Layer          | Technology                         | Version   |
-|----------------|------------------------------------|-----------|
-| Language       | Python                             | 3.13.5    |
-| Framework      | Django                             | 6.1       |
-| API            | Django REST Framework              | 3.18      |
-| Auth           | djangorestframework-simplejwt      | 5.5+      |
-| API Docs       | drf-spectacular (OpenAPI 3)        | 0.30+     |
-| Filter         | django-filter                      | 23+       |
-| Tree           | django-treebeard (MP_Node)         | 7+        |
-| CORS           | django-cors-headers                | 4.3+      |
-| DB Adapter     | psycopg[binary] (psycopg3)         | 3.3+      |
-| Database       | PostgreSQL                         | 18        |
-| Cache/Broker   | Redis                              | 7         |
-| Task Queue     | Celery                             | 5.4+      |
-| Images         | Pillow                             | 10+       |
-| Env            | python-dotenv                      | 1.0+      |
-| Frontend       | React                              | 19        |
-| Build          | Vite                               | 6         |
-| Type System    | TypeScript                         | 5.8       |
-| Styling        | Tailwind CSS                       | 4         |
-| State          | Zustand                            | 5         |
-| Routing        | react-router-dom                   | 7.18      |
-| Testing (BE)   | Django TestCase + custom runner    | —         |
-| Testing (FE)   | Vitest + React Testing Library     | —         |
+### Backend (pinned versions per `requirements.txt`)
+
+| Layer          | Technology                         |
+|----------------|------------------------------------|
+| Language       | Python ≥ 3.13                      |
+| Framework      | Django ≥ 6.1, < 7.0                |
+| API            | Django REST Framework ≥ 3.18       |
+| Auth           | djangorestframework-simplejwt ≥ 5.3|
+| API Docs       | drf-spectacular ≥ 0.30             |
+| Filter         | django-filter ≥ 23.0               |
+| Tree           | django-treebeard ≥ 4.7.1           |
+| CORS           | django-cors-headers ≥ 4.3          |
+| DB Adapter     | psycopg[binary] ≥ 3.3              |
+| Database       | PostgreSQL (production)            |
+| Cache/Broker   | Redis                              |
+| Task Queue     | celery[redis] ≥ 5.4                |
+| Images         | Pillow ≥ 10.0                      |
+
+### Frontend (versions per `package.json`)
+
+| Layer          | Technology                         |
+|----------------|------------------------------------|
+| UI Framework   | React 19                           |
+| Build          | Vite 6                             |
+| Type System    | TypeScript 5.8                     |
+| Styling        | Tailwind CSS 4                     |
+| State          | Zustand 5                          |
+| Routing        | react-router-dom 7                 |
 
 ---
 
@@ -96,9 +101,9 @@
 Amazone_Clone/                   # Backend root (Django project)
 ├── config/                      # Project configuration
 │   ├── settings.py              # Django settings (SQLite/PG, JWT, CORS, Celery)
-│   ├── urls.py                  # Root URL config (all apps mounted under /api/v1/)
+│   ├── urls.py                  # Root URL config (all apps under /api/v1/)
 │   ├── celery.py                # Celery app + beat schedule
-│   ├── test_runner.py           # Custom AppDiscoverRunner (Python 3.13+ fix)
+│   ├── test_runner.py           # Custom AppDiscoverRunner
 │   ├── asgi.py / wsgi.py        # ASGI/WSGI entry points
 │   └── __init__.py              # Loads celery app
 │
@@ -133,7 +138,7 @@ frontend/                        # Frontend root (React SPA)
 │   ├── app/                     # App entry, providers, router
 │   ├── components/              # UI + layout components
 │   ├── pages/                   # Route-level page components
-│   ├── store/                   # Zustand stores (auth, cart, catalog, …)
+│   ├── store/                   # Zustand stores
 │   ├── types/                   # TypeScript interfaces
 │   ├── hooks/                   # Custom React hooks
 │   ├── utils/                   # Formatters, helpers
@@ -163,14 +168,14 @@ apps/<app_name>/
 ├── admin/                       # Django admin configuration
 ├── migrations/
 ├── tests/                       # Unit + integration tests
-│   ├── factories.py             # Test data helpers
+│   ├── factories.py
 │   ├── test_models.py
 │   ├── test_services.py
 │   ├── test_api.py
 │   ├── test_querysets.py
 │   └── test_signals.py
 ├── urls.py                      # App URL routes
-└── signals.py                   # Django signals (post_save, etc.)
+└── signals.py                   # Django signals (see § Cross-Domain Coordination)
 ```
 
 ---
@@ -179,42 +184,47 @@ apps/<app_name>/
 
 ### 1. Service Layer Pattern
 
-All business logic lives in **services**, never in views or serializers.
+**Rule.** All business logic lives in **services**, never in views or
+serializers.
 
 ```
 Request → View → Serializer (validation) → Service (business logic) → ORM → Database
 ```
 
-- **Views** handle HTTP, permissions, and response formatting.
-- **Serializers** validate input and format output.
+- **Views** handle HTTP, permissions, and response formatting — no
+  business rules.
+- **Serializers** validate input and format output — no business rules.
 - **Services** contain all business rules: state transitions, stock
   reservation, payment processing, order creation.
 - **ORM** is accessed only from services.
 
 📖 [Martin Fowler — Service Layer](https://martinfowler.com/eaaCatalog/serviceLayer.html)
 
-### 2. Transaction Safety
+### 2. Concurrency-Safe State Transitions
 
-Every mutating service method is decorated with `@transaction.atomic`
-and uses `select_for_update()` for pessimistic row-level locking:
+**Rule.** Service methods that modify concurrency-sensitive state must
+use `@transaction.atomic` and `select_for_update()` on the rows they
+modify.
 
-```python
-@staticmethod
-@transaction.atomic
-def reserve_stock(order):
-    stock = Stock.objects.select_for_update().get(pk=stock.pk)
-    Stock.objects.filter(pk=stock.pk).update(
-        reserved_quantity=F('reserved_quantity') + quantity,
-    )
-```
+**Concurrency-sensitive state** is state where a lost update or
+read-write race would violate business invariants:
 
-This guarantees that concurrent requests serialize correctly at the
-database level — no race conditions, no phantom reads.
+| State                              | Why concurrency-sensitive             |
+|------------------------------------|---------------------------------------|
+| `Stock.quantity` / `reserved`      | Two users checkout same variant       |
+| `Cart` during merge                | Guest and user carts modified together |
+| `Order._order_number_seq`          | Parallel order creation               |
+| `Payment.status` on webhook        | Duplicate webhook delivery            |
+
+Service methods that only insert new rows or modify single-user state
+(e.g. creating a `Review`, updating `UserProfile`) do not require
+`select_for_update()` but may still use `@transaction.atomic` for
+atomicity.
 
 ### 3. BaseModel (Abstract Base Class)
 
-All domain models inherit from `BaseModel` (except `User` which inherits
-`AbstractUser`):
+**Rule.** All domain models inherit from `BaseModel` (except `User`
+which inherits `AbstractUser`).
 
 ```python
 class BaseModel(models.Model):
@@ -227,8 +237,8 @@ class BaseModel(models.Model):
 
 ### 4. Denormalization for Performance
 
-The `Product` model stores pre-computed aggregates to avoid expensive
-JOINs on every listing request:
+**Current implementation.** The `Product` model stores pre-computed
+aggregates to avoid expensive JOINs on every listing request:
 
 | Field            | Source                                | Purpose                            |
 |------------------|---------------------------------------|------------------------------------|
@@ -238,19 +248,134 @@ JOINs on every listing request:
 | `reviews_count`  | `COUNT(review)`                       | Display count without JOIN         |
 | `views_count`    | `COUNT(product_view)`                 | Popularity sort without JOIN       |
 
-### 5. Snapshot Pattern
+These are updated by Django signals on review save / product view
+(see [Cross-Domain Coordination](#cross-domain-coordination)).
 
-Order copies address and price data at creation time (not FK):
+### 5. Historical Snapshot Pattern
 
-- **Address snapshot**: if the user changes their address, past orders
-  retain the original delivery address — critical for legal compliance.
-- **Price snapshot**: `OrderItem.unit_price` is copied from
-  `Price.effective_price` at checkout — if the price changes later,
-  the order total remains correct.
+**Rule.** Order-related data must be snapshot at creation time so that
+later changes to the source do not alter historical records.
+
+See [Historical Snapshot Invariants](#historical-snapshot-invariants).
 
 ---
 
-## Django Apps
+## Domain Ownership
+
+Each Django app owns its domain models. Only the owning app's service
+layer may mutate that model's state.
+
+| Domain (app)   | Owns                                | May mutate via               |
+|----------------|-------------------------------------|------------------------------|
+| `catalog`      | `Product`, `ProductVariant`         | `CatalogService`             |
+| `pricing`      | `Price`, `PriceHistory`             | `PricingService`             |
+| `inventory`    | `Stock`, `StockMovement`            | `InventoryService`           |
+| `cart`         | `Cart`, `CartItem`                  | `CartService`                |
+| `orders`       | `Order`, `OrderItem`                | `OrderService`               |
+| `payments`     | `Payment`, `PaymentEvent`           | `PaymentService`             |
+| `shipping`     | `Shipment`, `ShippingMethod`, `ShippingZone` | `ShippingService`   |
+| `reviews`      | `Review`, `ReviewHelpfulVote`, `ReviewImage` | `ReviewService`    |
+| `discounts`    | `Campaign`, `Coupon`                | `DiscountService`            |
+| `users`        | `User`, `Address`, `UserProfile`    | `UserService`, `AddressService`|
+| `wishlist`     | `Wishlist`, `WishlistItem`          | `WishlistService`            |
+| `notifications`| `Notification`                      | `NotificationService`        |
+| `analytics`    | `ProductView`                       | `AnalyticsService`           |
+
+**Rule.** If app A needs to trigger a state change in app B, app A must
+call app B's service method — never app B's ORM directly.
+
+**Example (current implementation):**
+`OrderService._handle_inventory_transition()` calls
+`InventoryService.reserve_stock()` / `release_stock()` /
+`commit_stock()` — it never writes to `Stock` or `StockMovement`
+directly.
+
+---
+
+## Domain Dependency Rules
+
+### Allowed Dependencies
+
+The dependency graph is a **DAG** (directed acyclic graph). An app may
+import services from apps it depends on, but never the reverse.
+
+```
+users          ← no domain deps (foundational)
+catalog        ← users (FK: Product.vendor)
+pricing        ← catalog (FK: Price → ProductVariant), users
+inventory      ← catalog (FK: Stock → ProductVariant), orders
+cart           ← catalog (FK: CartItem → ProductVariant), users
+orders         ← cart, catalog, users, inventory, payments
+payments       ← orders, users
+reviews        ← catalog, users
+discounts      ← catalog, orders, users
+shipping       ← orders, users
+wishlist       ← catalog, users
+notifications  ← users
+analytics      ← catalog, users
+```
+
+### Prohibited Dependencies
+
+| From          | Cannot import from            | Reason                                   |
+|---------------|-------------------------------|------------------------------------------|
+| `catalog`     | `orders`, `cart`, `payments`  | Catalog must not know about transactions |
+| `pricing`     | `orders`, `cart`              | Pricing is independent of purchase flow  |
+| `inventory`   | `payments`, `cart`            | Stock does not depend on payment/cart    |
+| `users`       | any domain app                | Users is foundational — no reverse deps  |
+| any app       | another app's `api_views`     | Views are HTTP entry points, not APIs    |
+| any app       | another app's `serializers`   | Serializers are I/O, not business APIs   |
+
+### Rules
+
+1. **No circular dependencies.** If A imports from B, B must not
+   import from A.
+2. **No cross-domain view/serializer imports.** An app may import
+   another app's **services** and **models** only.
+3. **Services are the integration contract.** Cross-domain calls go
+   through service methods, not through Django signals, direct ORM
+   writes, or view composition.
+
+---
+
+## Historical Snapshot Invariants
+
+The following data is **snapshotted** (copied by value) at order
+creation time. Later mutations to the source **must not** affect
+existing orders.
+
+### `OrderItem.unit_price` — Price Snapshot
+
+- Copied from `Price.effective_price` at checkout.
+- If `Price.sale_price` changes after checkout, `OrderItem.unit_price`
+  retains the original value.
+- `Order.subtotal` and `Order.total` are recalculated from the
+  snapshotted `unit_price` values, never from live prices.
+
+### `Order.delivery_cost` — Shipping Cost Snapshot
+
+- Copied from the shipping cost calculation at checkout.
+- If `ShippingMethod.base_price` changes later, existing orders
+  retain the original delivery cost.
+
+### Order Address — Address Snapshot
+
+- `Order.recipient_name`, `country`, `region`, `city`, `street`,
+  `postal_code` are **plain fields** on `Order`, not FK to `Address`.
+- If the user edits or deletes their `Address`, past orders retain
+  the original delivery address.
+- Rationale: legal correctness (receipts, returns, disputes).
+
+### Cross-Domain Ownership Invariants
+
+| Invariant                       | Enforcement                                     |
+|---------------------------------|-------------------------------------------------|
+| `Payment.user == Order.user`   | `create_payment()` validates `order.user_id == user.pk` |
+| `Shipment.user == Order.user`  | `Shipment` created via `ShippingService` which receives the order (ownership checked) |
+
+---
+
+## Django Apps — Current Implementation
 
 ### `core` — Foundation
 
@@ -266,7 +391,7 @@ Order copies address and price data at creation time (not FK):
 | `UserProfile`  | Extended profile (phone, avatar, prefs)  |
 
 - Custom `EmailOrUsernameModelBackend` for login by email or username
-- JWT access (15 min) + refresh (7 days) with token blacklist
+- JWT access + refresh with token blacklist (`ROTATE_REFRESH_TOKENS=True`)
 - Password reset flow (request + confirm)
 
 ### `catalog` — Products & Categories
@@ -317,7 +442,7 @@ Order copies address and price data at creation time (not FK):
 
 - Guest cart keyed by `session_key_hash` (nullable, `None` for user carts)
 - `merge()`: merges guest cart into user cart on login
-- Celery task: `cleanup_expired_carts` (daily at 03:00)
+- Celery task: `cleanup_expired_carts` (scheduled via beat)
 
 ### `orders` — Order Processing
 
@@ -330,7 +455,8 @@ Order copies address and price data at creation time (not FK):
   Any non-terminal state → `CANCELLED`
 - `order_number`: auto-generated `ORD-000001` with retry on `IntegrityError`
 - `_order_number_seq`: sequential counter with `UniqueConstraint`
-- `OrderService.cancel()`: releases stock reservation + initiates refund
+- `OrderService.cancel()`: calls `InventoryService.release_stock()`
+  and `PaymentService.refund_payment()` for succeeded payments
 
 ### `payments` — Payment Processing
 
@@ -341,10 +467,13 @@ Order copies address and price data at creation time (not FK):
 
 - **Status FSM**: `PENDING → PROCESSING → SUCCEEDED / FAILED / CANCELLED`
 - `SUCCEEDED → REFUNDED` (full or partial)
-- `create_payment()`: validates `amount == order.total` (prevents paying $1 for $1000 order)
-- `confirm_payment()`: catches specific exceptions (`ValidationError`, `DatabaseError`)
+- `create_payment()`: validates `amount == order.total`
+- `confirm_payment()`: catches `ValidationError` and `DatabaseError` specifically
 - `handle_webhook()`: idempotent webhook processing
-- Mock provider with `external_id = 'mock_<uuid>'`
+
+**Current implementation**: mock provider with `external_id = 'mock_<uuid>'`.
+The webhook endpoint is `AllowAny` with no HMAC verification — suitable
+for development only.
 
 ### `reviews` — Product Reviews
 
@@ -356,8 +485,9 @@ Order copies address and price data at creation time (not FK):
 
 - One review per user per product (`UniqueConstraint`)
 - Helpful voting: toggle logic (click again to remove vote)
-- Sorting: `?ordering=-rating`, filtering: `?rating_gte=4&verified=true`
+- Sorting/filtering: `?ordering=-rating`, `?rating_gte=4&verified=true`
 - Product `rating` / `reviews_count` updated on review save
+  (see [Cross-Domain Coordination](#cross-domain-coordination))
 
 ### `discounts` — Campaigns & Coupons
 
@@ -390,7 +520,7 @@ Order copies address and price data at creation time (not FK):
 | `Notification` | Type, status (unread/read), payload    |
 
 - Endpoints: list, mark read, mark all read, unread count
-- Celery task stubs for email delivery
+- Celery task stubs for email delivery (console backend)
 
 ### `analytics` — Product Views
 
@@ -448,8 +578,7 @@ Stock ──1:N── StockMovement (audit)
 | `inventory_stock`  | `stock_quantity_non_negative`               | Quantity ≥ 0                   |
 | `payments_payment` | `payment_refund_lte_amount`                 | Refund cannot exceed payment   |
 
-> All constraints use `CheckConstraint(condition=...)` — the
-> `condition=` keyword is correct for Django 4.2, 5.0, and 6.1.
+> All constraints use `CheckConstraint(condition=...)`.
 
 ---
 
@@ -528,18 +657,46 @@ The React API client (`client.ts`) uses an Axios interceptor that:
 
 ## Concurrency & Transaction Safety
 
-### Pattern: `@transaction.atomic` + `select_for_update()`
+### When to Use `select_for_update()`
 
-All mutating service methods follow this pattern:
+`select_for_update()` is required only for **concurrency-sensitive
+state** — rows where a lost update would violate a business invariant
+(see Architectural Principles §2).
+
+**Requires `select_for_update()`:**
+
+| Operation                          | Rows locked                    |
+|------------------------------------|--------------------------------|
+| `InventoryService.reserve_stock()` | `Stock` row for each variant   |
+| `InventoryService.release_stock()` | `Stock` row for each variant   |
+| `InventoryService.commit_stock()`  | `Stock` row for each variant   |
+| `CartService` during merge         | `Cart` row (user + guest)      |
+| `OrderService.create_from_cart()`  | `Cart` row                     |
+| `PaymentService` status transitions| `Payment` row                  |
+
+**Does not require `select_for_update()`:**
+
+| Operation                          | Reason                                 |
+|------------------------------------|----------------------------------------|
+| Creating a `Review`                | UniqueConstraint on user+product is sufficient |
+| Updating `UserProfile`             | Single-user state, no contention       |
+| Creating a `WishlistItem`          | UniqueConstraint is sufficient          |
+
+### Pattern: `@transaction.atomic` + `select_for_update()`
 
 ```python
 @staticmethod
 @transaction.atomic
-def some_mutation(...):
-    obj = Model.objects.select_for_update().get(pk=pk)
-    # ... business logic ...
-    Model.objects.filter(pk=pk).update(field=F('field') + delta)
+def reserve_stock(order):
+    stock, _ = Stock.objects.get_or_create(variant=variant, defaults={...})
+    stock = Stock.objects.select_for_update().get(pk=stock.pk)
+    # ... business logic + F()-expression update ...
 ```
+
+> **Important.** `select_for_update()` and `get_or_create()` are
+> **incompatible** — `select_for_update()` can only lock existing rows.
+> The correct pattern is `get_or_create()` first, then
+> `select_for_update().get()`.
 
 ### Key Protections
 
@@ -552,33 +709,74 @@ def some_mutation(...):
 | Double webhook delivery     | Idempotent: already-SUCCEEDED → no-op                  |
 | Stock reserved > quantity   | `CheckConstraint(reserved_quantity__lte=F('quantity'))` |
 
-### `select_for_update()` + `get_or_create()` Fix
+---
 
-These two methods are **incompatible**: `select_for_update()` can only
-lock existing rows. The correct pattern is:
+## Cross-Domain Coordination
 
-```python
-stock, created = Stock.objects.get_or_create(variant=variant, defaults={...})
-stock = Stock.objects.select_for_update().get(pk=stock.pk)
+### Current Mechanism: Service Calls
+
+Cross-domain side effects are currently orchestrated by **explicit
+service calls** within `@transaction.atomic` blocks:
+
 ```
+OrderService.transition_status(CONFIRMED)
+  → InventoryService.reserve_stock(order)
+
+OrderService.cancel()
+  → InventoryService.release_stock(order)
+  → PaymentService.refund_payment(payment, ...)
+```
+
+This is the **primary** mechanism for cross-domain coordination.
+
+### Role of Django Signals
+
+Django signals are used **only** for single-domain side effects
+(where the signal handler and the model belong to the same app):
+
+| Signal                      | Purpose                                    | Same domain? |
+|-----------------------------|--------------------------------------------|--------------|
+| `ProductVariant.post_save`  | Auto-create `Stock` + `Price` rows         | Yes*         |
+| `Review.post_save`          | Update `Product.rating` / `reviews_count`  | No (cross)   |
+
+\* `ProductVariant.post_save` creates rows in `inventory` and `pricing`.
+This is a **known cross-domain signal** that should be migrated to an
+explicit service call (see [Future Direction](#future-direction)).
+
+**Rule.** Django signals must **not** be used as the primary mechanism
+for cross-domain business orchestration. They may be used for:
+
+- Same-domain housekeeping (auto-creating related rows)
+- Denormalization cache updates (non-critical, eventually consistent)
+- Audit logging within the same domain
+
+Cross-domain business rules (stock reservation on order confirmation,
+refund on order cancellation) **must** go through explicit service calls
+so that:
+- The call is visible in the code path (not hidden in a signal)
+- Failures can be caught and handled by the caller
+- The transaction boundary is explicit
 
 ---
 
 ## Async Tasks (Celery)
 
-### Configuration
+### Configuration (Current)
 
-- **Broker**: Redis (`redis://localhost:6379/0`)
-- **Backend**: Redis (task results stored 1 hour)
+- **Broker**: Redis
+- **Backend**: Redis (task results)
 - **Serialization**: JSON (not pickle — security)
-- **Concurrency**: 4 workers
 
-### Beat Schedule (Periodic Tasks)
+### Registered Tasks
 
-| Task                            | Schedule   | Purpose                        |
-|---------------------------------|------------|--------------------------------|
-| `cleanup_old_carts`             | Daily 03:00| Remove expired inactive carts   |
-| `send_abandoned_cart_reminders` | Hourly     | Email nudge for abandoned carts|
+| Task                            | Module                  | Purpose                        |
+|---------------------------------|-------------------------|--------------------------------|
+| `cleanup_old_carts`             | `apps.cart.tasks`      | Remove expired inactive carts   |
+| `send_abandoned_cart_reminders` | `apps.cart.tasks`      | Email nudge for abandoned carts|
+
+> Beat schedule (intervals, crontab) is **runtime configuration**
+> defined in `config/celery.py` and may be changed without a code
+> deployment.
 
 ### Task Routing
 
@@ -593,7 +791,7 @@ stock = Stock.objects.select_for_update().get(pk=stock.pk)
 ## Full-Text Search
 
 On PostgreSQL, the `Product` model uses a `SearchVectorField` with a
-GIN index for sub-millisecond full-text search:
+GIN index:
 
 ```python
 search_vector = SearchVectorField(null=True, blank=True, editable=False)
@@ -613,7 +811,7 @@ uses `__icontains` instead.
 
 ## Frontend Architecture
 
-### State Management (Zustand 5)
+### State Management (Zustand)
 
 | Store                   | Purpose                                 |
 |-------------------------|-----------------------------------------|
@@ -621,7 +819,7 @@ uses `__icontains` instead.
 | `cartStore`             | Cart items, add/remove/merge            |
 | `catalogStore`          | Products, filters, pagination           |
 | `wishlistStore`         | Wishlist items, add/remove              |
-| `notificationStore`     | Notifications, polling every 30s        |
+| `notificationStore`     | Notifications, polling                  |
 | `recentlyViewedStore`   | Recently viewed products (localStorage) |
 
 ### API Client Architecture
@@ -666,8 +864,8 @@ src/api/
 ### UI Components
 
 - `ErrorBoundary` — catches render errors, shows fallback UI
-- `Toast` / `ToastContainer` — notification toasts (success/error/info)
-- `Skeleton` — loading placeholders (card, text, product page)
+- `Toast` / `ToastContainer` — notification toasts
+- `Skeleton` — loading placeholders
 - `Header` — categories dropdown, notification bell with badge
 - `CartDrawer` — slide-out cart from any page
 
@@ -679,8 +877,8 @@ src/api/
 
 | Service      | Image             | Port  | Purpose                    |
 |--------------|-------------------|-------|----------------------------|
-| `db`         | `postgres:18`     | 5432  | Primary database           |
-| `redis`      | `redis:7-alpine`  | 6379  | Cache + Celery broker      |
+| `db`         | `postgres`        | 5432  | Primary database           |
+| `redis`      | `redis`           | 6379  | Cache + Celery broker      |
 | `backend`    | custom build      | 8000  | Django (runserver dev)     |
 | `celery`     | custom build      | —     | Celery worker              |
 | `celery-beat`| custom build      | —     | Periodic task scheduler    |
@@ -703,12 +901,14 @@ src/api/
 
 ### Backend
 
-- **950 tests**, 0 failures, 2 skipped (PostgreSQL-only)
 - Custom test runner: `config.test_runner.AppDiscoverRunner` — fixes
-  `unittest.discover()` issues with nested `tests/` packages on
-  Python 3.13+
-- Throttling disabled in tests (`DEFAULT_THROTTLE_RATES = None`)
+  `unittest.discover()` issues with nested `tests/` packages
+- Throttling disabled in tests
 - SQLite by default; PostgreSQL required for FTS and `select_for_update`
+
+> Test count as of last measurement: ~950 tests, 0 failures, 2 skipped
+> (PostgreSQL-only). This number will change as tests are added or
+> refactored.
 
 ### Per-App Test Structure
 
@@ -719,14 +919,13 @@ tests/
 ├── test_services.py      # Business logic (the bulk of tests)
 ├── test_api.py           # HTTP endpoint tests (permissions, status codes)
 ├── test_querysets.py     # QuerySet methods (.active(), .for_user(), ...)
-└── test_signals.py       # Signal handlers (auto-stock, auto-price, ...)
+└── test_signals.py       # Signal handlers
 ```
 
 ### Frontend
 
 - Vitest + React Testing Library + MSW (Mock Service Worker)
 - Test files in `__tests__/` directories and `*.test.ts` files
-- Key tests: `authStore`, `cartStore`, `formatPrice`, `formatDate`
 
 ---
 
@@ -736,14 +935,14 @@ tests/
 
 ```powershell
 # Backend
-py -3.13 -m venv .venv
+py -3 -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python manage.py migrate
 python manage.py createsuperuser
 python manage.py runserver
 
-# Frontend (via cmd.exe — PowerShell blocks npm)
+# Frontend (via cmd.exe — PowerShell may block npm)
 cmd /c "npm install"
 cmd /c "npm run dev"
 ```
@@ -783,3 +982,107 @@ docker compose down           # Stop
 - [ ] Enable psycopg3 connection pooling
 - [ ] Set up SMTP or django-anymail for email
 - [ ] Add rate limiting on payment webhook endpoint
+
+---
+
+## Future Direction
+
+The following are **recommendations** for future evolution. They are
+**not currently implemented** and should not be assumed to exist.
+
+### Payment Gateway Abstraction
+
+**Current state**: `PaymentService` uses a mock provider
+(`external_id = 'mock_<uuid>'`). There is no `PaymentGateway`
+interface or adapter pattern.
+
+**Recommended direction**: Introduce a `PaymentGateway` protocol
+(abstraction) with concrete adapters:
+
+```
+apps/payments/
+├── gateways/
+│   ├── base.py          # PaymentGateway protocol (ABC)
+│   ├── mock.py          # MockGateway (current behavior)
+│   ├── yookassa.py      # YooKassaGateway (future)
+│   └── stripe.py        # StripeGateway (future)
+```
+
+Each adapter implements `create()`, `confirm()`, `cancel()`,
+`refund()`, `verify_webhook()`. The webhook endpoint would then
+verify HMAC signatures per provider.
+
+### Domain Events
+
+**Current state**: Cross-domain coordination uses explicit service
+calls (see [Cross-Domain Coordination](#cross-domain-coordination)).
+
+**Recommended direction**: For cases where synchronous coupling is
+undesirable (e.g. sending notification emails should not block order
+confirmation), introduce lightweight domain events dispatched after
+`transaction.atomic` commit:
+
+```python
+# Potential future API (not implemented):
+@transaction.atomic
+def confirm(order):
+    # ... business logic ...
+    dispatch_event(OrderConfirmed(order))
+
+# Handler (async, via Celery):
+@on_event(OrderConfirmed)
+def handle(order):
+    NotificationService.send_order_confirmed(order)
+```
+
+This would replace the current `try/except` pattern in
+`OrderService._handle_inventory_transition()` for non-critical
+side effects.
+
+### DTO / Projections
+
+**Current state**: Serializers read from ORM models directly, which
+can lead to N+1 queries if not carefully managed.
+
+**Recommended direction**: For complex read models (order detail,
+product page), consider explicit read-model DTOs or projection
+classes that encapsulate the exact query and shape, separate from
+write-model serializers.
+
+### Cross-Domain Signal Migration
+
+**Current state**: `ProductVariant.post_save` signal auto-creates
+`Stock` and `Price` rows — a cross-domain side effect via signal.
+
+**Recommended direction**: Replace with an explicit call:
+
+```python
+# In CatalogService or a coordinator:
+def create_variant(...):
+    variant = ProductVariant(...)
+    variant.save()
+    InventoryService.get_or_create_stock(variant)
+    PricingService.get_or_create_price(variant)
+```
+
+This makes the cross-domain dependency explicit and testable.
+
+### Webhook Security
+
+**Current state**: `POST /api/v1/payments/webhook/` is `AllowAny`
+with no signature verification.
+
+**Recommended direction**: Add HMAC-SHA256 verification per provider
+(YooKassa, Stripe). The webhook view should:
+1. Read the signature header
+2. Recompute HMAC over the raw body with the provider's secret
+3. Reject if mismatch (403)
+
+### Denormalization Refresh
+
+**Current state**: `Product.rating`, `reviews_count`, `min_price`,
+`max_price` are updated by signals on each related change.
+
+**Recommended direction**: For high-write scenarios, decouple
+denormalization updates via Celery tasks to avoid write amplification
+on the `Product` row.
