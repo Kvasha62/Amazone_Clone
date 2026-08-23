@@ -292,52 +292,6 @@ directly.
 
 ---
 
-## Domain Dependency Rules
-
-### Allowed Dependencies
-
-The dependency graph is a **DAG** (directed acyclic graph). An app may
-import services from apps it depends on, but never the reverse.
-
-```
-users          ← no domain deps (foundational)
-catalog        ← users (FK: Product.vendor)
-pricing        ← catalog (FK: Price → ProductVariant), users
-inventory      ← catalog (FK: Stock → ProductVariant), orders
-cart           ← catalog (FK: CartItem → ProductVariant), users
-orders         ← cart, catalog, users, inventory, payments
-payments       ← orders, users
-reviews        ← catalog, users
-discounts      ← catalog, orders, users
-shipping       ← orders, users
-wishlist       ← catalog, users
-notifications  ← users
-analytics      ← catalog, users
-```
-
-### Prohibited Dependencies
-
-| From          | Cannot import from            | Reason                                   |
-|---------------|-------------------------------|------------------------------------------|
-| `catalog`     | `orders`, `cart`, `payments`  | Catalog must not know about transactions |
-| `pricing`     | `orders`, `cart`              | Pricing is independent of purchase flow  |
-| `inventory`   | `payments`, `cart`            | Stock does not depend on payment/cart    |
-| `users`       | any domain app                | Users is foundational — no reverse deps  |
-| any app       | another app's `api_views`     | Views are HTTP entry points, not APIs    |
-| any app       | another app's `serializers`   | Serializers are I/O, not business APIs   |
-
-### Rules
-
-1. **No circular dependencies.** If A imports from B, B must not
-   import from A.
-2. **No cross-domain view/serializer imports.** An app may import
-   another app's **services** and **models** only.
-3. **Services are the integration contract.** Cross-domain calls go
-   through service methods, not through Django signals, direct ORM
-   writes, or view composition.
-
----
-
 ## Historical Snapshot Invariants
 
 The following data is **snapshotted** (copied by value) at order
