@@ -15,14 +15,18 @@
 #
 # БЕЗОПАСНОСТЬ:
 #   • IsAuthenticated — список, создание, детали, отмена
-#   • AllowAny — вебхук (внешний запрос от провайдера, без JWT)
+#   • AllowAny + HMAC-SHA256 — вебхук (внешний запрос от провайдера)
 #   • IsAdminUser — возврат средств (только для staff)
 #   • Ownership check — пользователь видит только свои платежи
 #
 # 📖 https://www.django-rest-framework.org/api-guide/views/
 # ────────────────────────────────────────────────────────────────────────
 
+import hashlib
+import hmac
 import logging
+
+from django.conf import settings
 
 from rest_framework import status
 from rest_framework.exceptions import NotFound, PermissionDenied
@@ -299,7 +303,8 @@ class PaymentCancelView(_PaymentViewMixin, APIView):
         summary='Вебхук от платёжного провайдера',
         description=(
             'Принимает уведомления от платёжного провайдера. '
-            'AllowAny — запрос приходит без JWT (подпись проверяется отдельно).'
+            'AllowAny — запрос приходит без JWT. '
+            'Аутентификация через HMAC-SHA256 подпись (X-Webhook-Signature).'
         ),
         request=HandleWebhookInputSerializer,
         responses={200: PaymentSerializer},
@@ -312,9 +317,11 @@ class PaymentWebhookView(APIView):
     Приём вебхуков от платёжного провайдера.
 
     БЕЗОПАСНОСТЬ:
-      AllowAny — провайдер отправляет запрос без JWT.
-      В реальном проекте: проверка подписи (HMAC / API key).
-      В mock-режиме — принимаем любой запрос.
+      • AllowAny — провайдер отправляет запрос без JWT.
+      • HMAC-SHA256 подпись обязательна (X-Webhook-Signature header).
+      • Secret берётся из settings.PAYMENT_WEBHOOK_SECRET (env var).
+      • В DEBUG-режиме без секрета — webhook отклоняется (не молча работает).
+      • Timing-safe сравнение (hmac.compare_digest).
 
     ИДЕМПОТЕНТНОСТЬ:
       Повторный вебхук обрабатывается корректно.
@@ -323,15 +330,66 @@ class PaymentWebhookView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = []  # Без аутентификации — внешний запрос
 
+    # Имя HTTP-заголовка с подписью
+    SIGNATURE_HEADER = 'X-Webhook-Signature'
+
+    def _verify_signature(self, request) -> bool:
+        """
+        Проверяет HMAC-SHA256 подпись вебхука.
+
+        АЛГОРИТМ:
+          1. Получить PAYMENT_WEBHOOK_SECRET из settings
+          2. Получить X-Webhook-Signature из заголовков
+          3. Вычислить HMAC-SHA256(secret, request.body)
+          4. Сравнить timing-safe (hmac.compare_digest)
+
+        ВОЗВРАЩАЕТ:
+          True — подпись валидна
+          False — подпись невалидна или отсутствует
+
+        🔴 НИКОГДА не логируем secret или signature.
+        """
+        secret = getattr(settings, 'PAYMENT_WEBHOOK_SECRET', None)
+        if not secret:
+            # В production секрет ОБЯЗАН быть задан.
+            # В development без секрета — отклоняем (не молча работаем).
+            logger.warning('webhook_rejected_no_secret_configured')
+            return False
+
+        signature = request.META.get(f'HTTP_{self.SIGNATURE_HEADER.upper().replace("-", "_")}')
+        if not signature:
+            logger.warning('webhook_rejected_missing_signature')
+            return False
+
+        expected = hmac.new(
+            secret.encode('utf-8'),
+            request.body,
+            hashlib.sha256,
+        ).hexdigest()
+
+        if not hmac.compare_digest(signature, expected):
+            logger.warning('webhook_rejected_invalid_signature')
+            return False
+
+        return True
+
     def post(self, request):
         """
         POST /api/v1/payments/webhook/
 
         ПОТОК:
-          1. Валидация body (HandleWebhookInputSerializer)
-          2. PaymentService.handle_webhook() — обработка
-          3. Ответ 200 (провайдер ожидает 200 для подтверждения)
+          1. Проверка HMAC-SHA256 подписи (X-Webhook-Signature)
+          2. Валидация body (HandleWebhookInputSerializer)
+          3. PaymentService.handle_webhook() — обработка
+          4. Ответ 200 (провайдер ожидает 200 для подтверждения)
         """
+        # ── HMAC-SHA256 аутентификация вебхука ──
+        if not self._verify_signature(request):
+            return Response(
+                {'detail': 'Invalid payment webhook signature.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         input_serializer = HandleWebhookInputSerializer(data=request.data)
         input_serializer.is_valid(raise_exception=True)
 
