@@ -7,6 +7,7 @@ from unittest import mock
 from django.test import TestCase
 from rest_framework.exceptions import ValidationError
 
+from apps.catalog.models import ProductVariant
 from apps.catalog.services.catalog_service import CatalogService
 from apps.pricing.models import Price, PriceHistory
 from apps.pricing.services.pricing_service import PricingService
@@ -288,10 +289,9 @@ class RecalculateProductBoundsTests(PricingTestCase):
     ARCH-001 Stage 2: публичный контракт
     PricingService.recalculate_product_bounds().
 
-    Единственный владелец расчёта price bounds — pricing. Контракт
-    вызывается из catalog (price-relevant события вариантов) через
-    register_price_bounds_listener — без Django-сигналов между
-    контекстами и без импорта pricing из catalog.
+    Единственный владелец расчёта price bounds — pricing
+    (ARCHITECTURE.md → Cross-Domain Coordination: явные service-вызовы,
+    без cross-context сигналов/реестров).
     """
 
     def _raw_price(self, variant, price):
@@ -336,30 +336,119 @@ class RecalculateProductBoundsTests(PricingTestCase):
             max_price=Decimal('150.00'),
         )
 
-    def test_pricing_registered_as_price_bounds_listener(self):
-        """
-        Wiring ARCH-001 Stage 2: pricing подписан на price-relevant
-        события каталога (регистрация в PricingConfig.ready()).
-        """
-        from apps.catalog.services import catalog_service
-        self.assertIn(
-            PricingService.recalculate_product_bounds,
-            catalog_service._price_bounds_listeners,
+
+class VariantStateCoordinationTests(PricingTestCase):
+    """
+    ARCH-001 Stage 2 (после review): явная SERVICE-координация
+    price-relevant состояния варианта.
+
+    Автоматической реакции на ORM-события каталога нет (запрещена
+    архитектурой). Изменение is_active / удаление варианта выполняется
+    ТОЛЬКО через PricingService.set_variant_active / delete_variant:
+    мутация — CatalogService (catalog-owned), расчёт — pricing-owned,
+    запись — CatalogService.set_product_prices. Dependency: pricing → catalog.
+    """
+
+    def _third_variant(self):
+        """Дополнительный активный вариант (для сценариев с 3 ценами)."""
+        return ProductVariant.objects.create(
+            product=self.product, sku='SKU-P3', is_active=True,
         )
 
-    def test_catalog_notification_reaches_pricing_recalc(self):
-        """
-        Интеграционный путь контракта: notify_price_relevant_state_changed()
-        из catalog доходит до пересчёта в pricing и обновляет Product
-        (без Django-сигналов между контекстами).
-        """
-        from apps.catalog.services.catalog_service import (
-            notify_price_relevant_state_changed,
-        )
-        self._raw_price(self.variant_a, Decimal('100.00'))
-        self._raw_price(self.variant_b, Decimal('300.00'))
-        # Состояние варианта изменилось (в тестах имитируем напрямую).
-        notify_price_relevant_state_changed(self.product)
+    def test_deactivation_excludes_variant(self):
+        """True → False: деактивированный вариант выпадает из границ."""
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        PricingService.set_price(self.variant_b, Decimal('200.00'))
+        PricingService.set_variant_active(self.variant_b, is_active=False)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('100.00'))
+        self.assertFalse(ProductVariant.objects.get(pk=self.variant_b.pk).is_active)
+
+    def test_reactivation_includes_variant(self):
+        """False → True: реактивированный вариант возвращается в границы."""
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        PricingService.set_price(self.variant_b, Decimal('200.00'))
+        PricingService.set_variant_active(self.variant_b, is_active=False)
+        PricingService.set_variant_active(self.variant_b, is_active=True)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('200.00'))
+
+    def test_delete_variant_updates_bounds(self):
+        """Удаление варианта пересчитывает границы (без него)."""
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        PricingService.set_price(self.variant_b, Decimal('200.00'))
+        PricingService.delete_variant(self.variant_b)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('100.00'))
+        self.assertFalse(ProductVariant.objects.filter(pk=self.variant_b.pk).exists())
+
+    def test_activation_change_without_price_sets_none(self):
+        """Отсутствие цены: смена is_active варианта без Price → None."""
+        PricingService.set_variant_active(self.variant_a, is_active=False)
+        self.product.refresh_from_db()
+        self.assertIsNone(self.product.min_price)
+        self.assertIsNone(self.product.max_price)
+
+    def test_multiple_active_variants_bounds(self):
+        """Несколько активных вариантов: min/max по всем активным."""
+        third = self._third_variant()
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        PricingService.set_price(self.variant_b, Decimal('200.00'))
+        PricingService.set_price(third, Decimal('300.00'))
         self.product.refresh_from_db()
         self.assertEqual(self.product.min_price, Decimal('100.00'))
         self.assertEqual(self.product.max_price, Decimal('300.00'))
+        # Деактивация среднего не ломает границы.
+        PricingService.set_variant_active(self.variant_b, is_active=False)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('300.00'))
+        # Деактивация минимального сдвигает min.
+        PricingService.set_variant_active(self.variant_a, is_active=False)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('300.00'))
+        self.assertEqual(self.product.max_price, Decimal('300.00'))
+
+    def test_set_variant_active_writes_through_catalog_contract(self):
+        """Запись после смены is_active — через контракт каталога (ровно 1)."""
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        PricingService.set_price(self.variant_b, Decimal('200.00'))
+        with mock.patch.object(
+            CatalogService, 'set_product_prices', return_value=self.product,
+        ) as set_prices:
+            PricingService.set_variant_active(self.variant_b, is_active=False)
+        set_prices.assert_called_once_with(
+            self.product,
+            min_price=Decimal('100.00'),
+            max_price=Decimal('100.00'),
+        )
+
+    def test_delete_variant_writes_through_catalog_contract(self):
+        """Запись после удаления варианта — через контракт каталога (ровно 1)."""
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        PricingService.set_price(self.variant_b, Decimal('200.00'))
+        with mock.patch.object(
+            CatalogService, 'set_product_prices', return_value=self.product,
+        ) as set_prices:
+            PricingService.delete_variant(self.variant_b)
+        set_prices.assert_called_once_with(
+            self.product,
+            min_price=Decimal('100.00'),
+            max_price=Decimal('100.00'),
+        )
+
+    def test_raw_variant_save_does_not_recompute(self):
+        """
+        Документирование trade-off: raw ORM-мутация is_active в обход
+        сервиса НЕ запускает пересчёт (его нет — см. тесты каталога).
+        """
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        with mock.patch.object(
+            CatalogService, 'set_product_prices', return_value=self.product,
+        ) as set_prices:
+            self.variant_a.is_active = False
+            self.variant_a.save()
+        set_prices.assert_not_called()

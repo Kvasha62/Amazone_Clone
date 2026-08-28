@@ -23,20 +23,18 @@ class PricingConfig(AppConfig):
 
     def ready(self):
         # ────────────────────────────────────────────────────────────
-        # ARCH-001 Stage 2: подписка pricing на price-relevant события
-        # каталога (изменение is_active варианта, удаление варианта).
+        # ARCH-001 Stage 2: здесь НЕТ ни cross-domain Django-сигналов,
+        # ни регистрации слушателей/подписок — автоматическая реакция
+        # pricing на изменение состояния каталога запрещена архитектурой
+        # (ARCHITECTURE.md → Cross-Domain Coordination: единственный
+        # механизм — явные service-вызовы с видимой точкой в коде).
         #
-        # Это НЕ Django signal и НЕ cross-domain сигнал:
-        #   • каталог объявляет контракт register_price_bounds_listener();
-        #   • pricing САМ (здесь, в своём AppConfig) регистрирует колбэк;
-        #   • направление статических импортов — только pricing → catalog
-        #     (catalog не импортирует pricing);
-        #   • обработка синхронная, в том же потоке и транзакции, что и
-        #     изменение состояния варианта.
+        # Обновление Product.min_price/max_price происходит ТОЛЬКО через
+        # явные вызовы PricingService:
+        #   set_price() / remove_price()          — изменение цены варианта
+        #   set_variant_active(variant, is_active) — смена is_active
+        #   delete_variant(variant)                — удаление варианта
+        #   recalculate_product_bounds(product)    — прямой пересчёт
+        # Направление зависимости: pricing → catalog (CatalogService).
         # ────────────────────────────────────────────────────────────
-        from apps.catalog.services.catalog_service import (
-            register_price_bounds_listener,
-        )
-        from apps.pricing.services.pricing_service import PricingService
-
-        register_price_bounds_listener(PricingService.recalculate_product_bounds)
+        pass

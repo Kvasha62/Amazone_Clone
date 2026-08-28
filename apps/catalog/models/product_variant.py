@@ -162,40 +162,6 @@ class ProductVariant(BaseModel):
     def __str__(self):
         return self.sku
 
-    def _get_old_is_active(self) -> bool | None:
-        """
-        Возвращает is_active варианта НА МОМЕНТ ПЕРЕД последним save().
-
-        Вызывается сигналом on_variant_change (apps/catalog/signals.py)
-        СРАЗУ ПОСЛЕ save(): post_save срабатывает, когда строка в БД уже
-        обновлена, поэтому прежнее значение нужно зафиксировать ДО записи
-        (см. save()). Значение «до последнего save» и позволяет сигналу
-        детектировать реальное изменение is_active.
-
-        ARCH-001 Stage 2: метод упоминался сигналом, но не существовал —
-        любой UPDATE варианта падал бы с AttributeError (латентный баг,
-        не покрытый тестами). Реализация читает только СВОЮ таблицу
-        (catalog-local, без обращения к pricing).
-
-        Returns:
-            bool — is_active до последнего save();
-            None — вариант ещё ни разу не сохранялся
-                   («старого» значения нет).
-        """
-        cached = getattr(self, '_old_is_active_cached', None)
-        if cached is not None:
-            return cached
-        # Инстанс не проходил через save() в этом процессе (загружен
-        # из БД запросом) → читаем сохранённое значение напрямую.
-        if self._state.adding or self.pk is None:
-            return None
-        return (
-            ProductVariant.objects
-            .filter(pk=self.pk)
-            .values_list('is_active', flat=True)
-            .first()
-        )
-
     def save(self, *args, **kwargs):
         # ------------------------------------------------------------------
         # Авто-генерация slug из «Название товара — SKU».
@@ -211,14 +177,4 @@ class ProductVariant(BaseModel):
                 self,
                 f'{self.product.name}-{self.sku}',
             )
-        # ARCH-001 Stage 2: фиксируем сохранённое в БД is_active ДО записи —
-        # post_save (on_variant_change) вызовет _get_old_is_active() уже
-        # после UPDATE, и прежнее значение можно взять только отсюда.
-        self._old_is_active_cached = (
-            None if self._state.adding
-            else ProductVariant.objects
-            .filter(pk=self.pk)
-            .values_list('is_active', flat=True)
-            .first()
-        )
         super().save(*args, **kwargs)

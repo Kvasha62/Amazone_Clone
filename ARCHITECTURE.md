@@ -259,8 +259,15 @@ aggregates to avoid expensive JOINs on every listing request:
 | `reviews_count`  | `COUNT(review)`                       | Display count without JOIN         |
 | `views_count`    | `COUNT(product_view)`                 | Popularity sort without JOIN       |
 
-These are updated by Django signals on review save / product view
-(see [Cross-Domain Coordination](#cross-domain-coordination)).
+`rating` and `reviews_count` are updated by Django signals on review
+save (see [Cross-Domain Coordination](#cross-domain-coordination)).
+
+`min_price` / `max_price` are updated exclusively through the explicit
+cross-domain service contract (ARCH-001 Stage 2): `pricing` computes
+the bounds from its own `Price` rows and writes them via
+`CatalogService.set_product_prices()` — `pricing → catalog`, and
+`catalog` never reads `pricing`. See
+[Cross-Domain Coordination](#cross-domain-coordination).
 
 ### 5. Historical Snapshot Pattern
 
@@ -694,6 +701,37 @@ OrderService.cancel()
 ```
 
 This is the **primary** mechanism for cross-domain coordination.
+
+### Price Bounds: `Product.min_price` / `max_price` (ARCH-001 Stage 2)
+
+The denormalized price bounds have exactly one authoritative update path:
+
+```
+PricingService.recalculate_product_bounds(product)
+  → computes MIN/MAX from its own `Price` rows (ACTIVE variants only)
+  → CatalogService.set_product_prices(product, min_price, max_price)
+  → catalog.Product
+```
+
+Dependency direction: `pricing → catalog` (one-way). `catalog` never
+imports `pricing` and never queries price tables.
+
+Variant state that affects the bounds (`is_active` change, variant
+deletion) MUST be changed through explicit service calls:
+
+```
+PricingService.set_variant_active(variant, is_active=...)  # mutation via CatalogService + recompute
+PricingService.delete_variant(variant)                     # mutation via CatalogService + recompute
+```
+
+**Rule.** There is NO automatic cross-context reaction to catalog
+state changes (no reverse dependency, no cross-context Django signal,
+no global listener registry / event bus). Any such mechanism would
+hide the cross-domain call path that this document requires to be
+explicit. Changing `variant.is_active` directly (Django admin, raw
+ORM) leaves `min_price`/`max_price` stale until the next pricing
+operation — this is an accepted, documented trade-off of the one-way
+architecture.
 
 ### Role of Django Signals
 

@@ -14,11 +14,13 @@
 #   (pricing → catalog → catalog.Product). Здесь нет cross-domain сигналов.
 #
 # ARCH-001 Stage 2: при price-relevant изменении вариантов каталога
-#   (is_active, удаление варианта) каталог уведомляет слушателей через
-#   контракт notify_price_relevant_state_changed(); pricing подписывается
-#   на него в PricingConfig.ready() (apps/pricing/apps.py,
-#   register_price_bounds_listener) — снова без Django-сигналов между
-#   контекстами и без импорта pricing из catalog.
+#   (is_active, удаление варианта) автоматической реакции НЕТ — она
+#   невозможна без нарушения архитектуры (reverse dependency /
+#   cross-context signal / event registry). Используются явные
+#   service-вызовы (ARCHITECTURE.md → Cross-Domain Coordination):
+#   PricingService.set_variant_active() / delete_variant() /
+#   recalculate_product_bounds(). Направление зависимости — только
+#   pricing → catalog.
 #
 # AppConfig (PricingConfig) живёт в apps/pricing/apps.py — Django ≥ 4.1
 # автоматически использует AppConfig-класс именно из модуля apps.py.

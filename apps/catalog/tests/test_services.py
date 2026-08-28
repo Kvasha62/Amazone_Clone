@@ -3,7 +3,6 @@
 """
 from decimal import Decimal
 from pathlib import Path
-from unittest import mock
 
 from django.test import TestCase
 from rest_framework.exceptions import NotFound, ValidationError
@@ -15,11 +14,7 @@ from apps.catalog.models import (
     Product,
     Tag,
 )
-from apps.catalog.services.catalog_service import (
-    CatalogService,
-    notify_price_relevant_state_changed,
-    register_price_bounds_listener,
-)
+from apps.catalog.services.catalog_service import CatalogService
 from apps.catalog.tests.factories import CatalogTestCase
 
 
@@ -384,62 +379,6 @@ class CatalogNoPricingDependencyTests(TestCase):
             'Product.recalculate_prices должен быть удалён — '
             'расчёт границ теперь в pricing, запись в CatalogService.',
         )
-
-
-class PriceBoundsListenerContractTests(CatalogTestCase):
-    """
-    ARCH-001 Stage 2: контракт price-relevant событий каталога.
-
-    catalog уведомляет зарегистрированных слушателей без Django-сигналов
-    и без импорта pricing. Слушателя регистрирует pricing в ready()
-    (проверка wiring — в apps/pricing/tests).
-    """
-
-    def test_notify_calls_registered_listener_with_product(self):
-        """notify() синхронно вызывает слушателя с товаром-аргументом."""
-        from apps.catalog.services import catalog_service
-        listener = mock.Mock()
-        with mock.patch.object(
-            catalog_service, '_price_bounds_listeners', [],
-        ) as registry:
-            registry.append(listener)
-            notify_price_relevant_state_changed(self.product)
-        listener.assert_called_once_with(self.product)
-
-    def test_notify_calls_each_listener_once(self):
-        """Несколько слушателей вызываются все, по одному разу."""
-        from apps.catalog.services import catalog_service
-        first, second = mock.Mock(), mock.Mock()
-        with mock.patch.object(
-            catalog_service, '_price_bounds_listeners', [],
-        ) as registry:
-            registry.append(first)
-            registry.append(second)
-            notify_price_relevant_state_changed(self.product)
-        first.assert_called_once_with(self.product)
-        second.assert_called_once_with(self.product)
-
-    def test_notify_without_listeners_is_noop(self):
-        """Нет слушателей → безопасный no-op (без исключений)."""
-        from apps.catalog.services import catalog_service
-        with mock.patch.object(
-            catalog_service, '_price_bounds_listeners', [],
-        ):
-            notify_price_relevant_state_changed(self.product)
-
-    def test_register_ignores_duplicate_listener(self):
-        """Повторная регистрация того же слушателя не дублирует его."""
-        from apps.catalog.services import catalog_service
-
-        def fake_listener(product):
-            pass
-
-        with mock.patch.object(
-            catalog_service, '_price_bounds_listeners', [],
-        ) as registry:
-            register_price_bounds_listener(fake_listener)
-            register_price_bounds_listener(fake_listener)
-            self.assertEqual(list(registry), [fake_listener])
 
 
 class CategoryServiceTests(TestCase):

@@ -603,10 +603,11 @@ class Product(BaseModel):
     # цены pricing через ORM-lookup по вариантам (JOIN на таблицу цен
     # pricing — запрещённая обратная зависимость catalog → pricing).
     #
-    # Пересчёт min_price/max_price теперь:
+    # Пересчёт min_price/max_price теперь выполняется ТОЛЬКО явными
+    # service-вызовами (ARCHITECTURE.md → Cross-Domain Coordination):
     #   1) рассчитывает pricing — PricingService.recalculate_product_bounds()
     #      (из СВОИХ данных Price, только активные варианты);
-    #   2) записывает catalog — CatalogService.set_product_prices();
-    #   3) запускается через контракт каталога
-    #      notify_price_relevant_state_changed() при price-relevant
-    #      изменении вариантов (см. apps/catalog/signals.py).
+    #   2) записывает catalog — CatalogService.set_product_prices().
+    # Смена is_active / удаление варианта — через
+    # PricingService.set_variant_active / delete_variant
+    # (автоматической реакции на ORM-события нет).

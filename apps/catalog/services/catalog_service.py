@@ -41,9 +41,6 @@ import logging
 #   Для цен точность критична — 0.01₽ ошибки накопятся в миллионы.
 from decimal import Decimal
 
-# Callable — тип для аннотации колбэков (контракт price-relevant событий).
-from collections.abc import Callable
-
 # transaction.atomic — декоратор / контекстный менеджер для
 # оборачивания кода в SQL-транзакцию:
 #   BEGIN; ... код ...; COMMIT;  (или ROLLBACK при исключении).
@@ -84,7 +81,7 @@ logger = logging.getLogger(__name__)
 
 
 # ────────────────────────────────────────────────────────────
-# ARCH-001 Stage 2: контракт price-relevant событий каталога.
+# ARCH-001 Stage 2: обновление Product.min_price/max_price.
 #
 # ПРОБЛЕМА:
 #   Product.min_price/max_price зависят и от состояния вариантов
@@ -93,60 +90,27 @@ logger = logging.getLogger(__name__)
 #   через ORM-lookup `variant.price` (JOIN на таблицу цен pricing) —
 #   это запрещённая обратная зависимость catalog → pricing.
 #
-# РЕШЕНИЕ (инверсия зависимости, БЕЗ Django-сигналов):
-#   catalog объявляет расширяемую точку — список слушателей
-#   price-relevant событий. Bounded context `pricing` при старте
-#   (PricingConfig.ready()) сам регистрирует свой колбэк
-#   PricingService.recalculate_product_bounds.
+# РЕШЕНИЕ (ARCHITECTURE.md → «Cross-Domain Coordination»):
+#   Единственный легитимный механизм cross-domain координации —
+#   ЯВНЫЕ service-вызовы с видимой точкой в коде и явной транзакцией:
 #
-#   Направление статических импортов строго однонаправленное:
-#       pricing → catalog
-#   catalog не знает, кто слушатель (никакого импорта pricing),
-#   событие обрабатывается синхронно — в том же потоке и транзакции,
-#   что и изменение состояния варианта.
+#     PricingService.recalculate_product_bounds(product)
+#       → расчёт min/max из СВОИХ данных pricing
+#       → CatalogService.set_product_prices(product, min_price, max_price)
+#       → catalog.Product
+#
+#   АВТОМАТИЧЕСКОЙ реакции каталога на изменение is_active/удаление
+#   варианта НЕТ и быть не может без нарушения архитектуры: любая
+#   механика авто-реакции — это либо reverse dependency
+#   (catalog → pricing), либо cross-context Django signal, либо
+#   глобальный registry/event bus — все три формы запрещены
+#   (ARCHITECTURE.md: «explicit service calls» — primary mechanism;
+#   сигналы — только same-domain). Поэтому изменение price-relevant
+#   состояния варианта выполняется ТОЛЬКО через явные сервисные
+#   методы (см. PricingService.set_variant_active / delete_variant).
+#   Каталог предоставляет catalog-owned мутации (ниже), pricing —
+#   оркестрацию и расчёт. Никаких реестров, локаторов и событий.
 # ────────────────────────────────────────────────────────────
-
-# Тип слушателя: callable(product) -> None.
-# Слушатель САМ рассчитывает границы из своих данных (свои модели)
-# и передаёт готовые значения в CatalogService.set_product_prices().
-PriceBoundsListener = Callable[[Product], None]
-
-# Реестр слушателей. Наполняется в AppConfig.ready() владельцев
-# других контекстов (сейчас — только apps.pricing).
-_price_bounds_listeners: list[PriceBoundsListener] = []
-
-
-def register_price_bounds_listener(listener: PriceBoundsListener) -> None:
-    """
-    Регистрирует слушателя price-relevant событий каталога.
-
-    Вызывается владельцем чужого контекста (сейчас — pricing) в своём
-    AppConfig.ready(). Это НЕ Django signal: обычный вызов колбэка
-    без глобальной dispatch-магии и без cross-context импортов.
-    Повторная регистрация того же слушателя игнорируется.
-    """
-    if listener not in _price_bounds_listeners:
-        _price_bounds_listeners.append(listener)
-        logger.debug(
-            'price_bounds_listener_registered',
-            extra={'listener': getattr(listener, '__qualname__', str(listener))},
-        )
-
-
-def notify_price_relevant_state_changed(product: Product) -> None:
-    """
-    Точка входа каталога: «изменилось состояние товара, влияющее на цены».
-
-    Вызывается из catalog-локальных сигналов (изменение is_active
-    варианта, удаление варианта). Слушатель (pricing) синхронно
-    пересчитывает min/max из своих данных и записывает их через
-    CatalogService.set_product_prices() — единственную точку mutation.
-
-    Если слушателей нет — безопасный no-op: границы обновятся при
-    следующей операции с ценами.
-    """
-    for listener in _price_bounds_listeners:
-        listener(product)
 
 
 class CatalogService:
@@ -567,6 +531,50 @@ class CatalogService:
             },
         )
         return product
+
+    # ----------------------------------------------------------
+    # Варианты: catalog-owned мутации price-relevant состояния
+    # ----------------------------------------------------------
+
+    @staticmethod
+    def set_variant_active(variant: ProductVariant, *, is_active: bool) -> ProductVariant:
+        """
+        Меняет is_active варианта. ТОЛЬКО мутация каталога.
+
+        ARCH-001 Stage 2: цены здесь НЕ пересчитываются — каталог не
+        умеет считать price bounds (не читает pricing). Оркестрацию
+        «мутация + пересчёт» выполняет владелец цен:
+        PricingService.set_variant_active() (явный service-вызов,
+        ARCHITECTURE.md → Cross-Domain Coordination).
+
+        ИЗМЕНЕНИЕ ЭТОГО МЕТОДА В ОБХОД СЕРВИСА PRICING (admin, raw ORM)
+        ОСТАВЛЯЕТ min_price/max_price ТОВАРА УСТАРЕВШИМИ ДО СЛЕДУЮЩЕЙ
+        ОПЕРАЦИИ С ЦЕНАМИ — так задумано (осознанный trade-off
+        однонаправленной архитектуры, см. ARCHITECTURE.md).
+        """
+        variant.is_active = is_active
+        variant.save(update_fields=['is_active', 'updated_at'])
+
+        logger.debug(
+            'variant_activity_updated',
+            extra={'variant_id': variant.pk, 'is_active': is_active},
+        )
+        return variant
+
+    @staticmethod
+    def delete_variant(variant: ProductVariant) -> None:
+        """
+        Удаляет вариант. ТОЛЬКО мутация каталога (аналогично
+        set_variant_active: пересчёт цен — обязанность PricingService,
+        см. PricingService.delete_variant()).
+        """
+        variant_id = variant.pk
+        variant.delete()
+
+        logger.debug(
+            'variant_deleted',
+            extra={'variant_id': variant_id},
+        )
 
     # ----------------------------------------------------------
     # Категории

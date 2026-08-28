@@ -5,10 +5,10 @@
   - sync_product_main_image: is_main=True → Product.main_image
   - clear_product_main_image_on_delete: удаление главного фото
   - update_product_search_vector: name/description → search_vector
-  - VariantPriceRelevantSignalTests: price-relevant изменения вариантов
-    (is_active, удаление) обновляют min_price/max_price через контракт
-    notify_price_relevant_state_changed → pricing → CatalogService
-    (ARCH-001 Stage 2, без обратной зависимости catalog → pricing)
+  - VariantPriceWiringRemovedTests: в каталоге НЕТ price-recompute
+    wiring на ORM-события вариантов (ARCH-001 Stage 2: координация —
+    явные service-вызовы PricingService, CASCADE-удаление товара не
+    перезаписывает удаляемый Product)
 """
 from decimal import Decimal
 from unittest import mock, skipIf
@@ -21,7 +21,6 @@ from apps.catalog.models import (
     Category,
     Product,
     ProductImage,
-    ProductVariant,
 )
 from apps.catalog.tests.factories import CatalogTestCase
 
@@ -87,13 +86,20 @@ class MainImageSignalTests(CatalogTestCase):
         self.assertEqual(self.product.main_image_id, img2.pk)
 
 
-class VariantPriceRelevantSignalTests(CatalogTestCase):
+class VariantPriceWiringRemovedTests(CatalogTestCase):
     """
-    ARCH-001 Stage 2: price-relevant изменения вариантов каталога
-    продолжают обновлять Product.min_price / max_price — но теперь
-    через контракт notify_price_relevant_state_changed(): расчёт в
-    pricing (PricingService.recalculate_product_bounds), запись в
-    CatalogService.set_product_prices(). Без чтения pricing из catalog.
+    ARCH-001 Stage 2 (после review): в каталоге НЕТ price-recompute
+    wiring на ORM-события вариантов.
+
+    Автоматическая реакция на изменение is_active/удаление варианта
+    невозможна без нарушения архитектуры (reverse dependency,
+    cross-context signal или event registry — все запрещены,
+    ARCHITECTURE.md → Cross-Domain Coordination). Координация —
+    явные service-вызовы PricingService.set_variant_active /
+    delete_variant (поведенческие сценарии — в apps/pricing/tests).
+
+    Этот класс доказывает ОТРИЦАНИЕ: ORM-мутации и каскадные удаления
+    каталога не запускают пересчёт цен и не трогают Product.
     """
 
     def setUp(self):
@@ -103,104 +109,56 @@ class VariantPriceRelevantSignalTests(CatalogTestCase):
         PricingService.set_price(self.variant_256, Decimal('200.00'))
         self.product.refresh_from_db()
 
-    def test_variant_deactivation_updates_bounds(self):
-        """Деактивация варианта — границы пересчитываются (без него)."""
-        self.variant_256.is_active = False
-        self.variant_256.save()
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.min_price, Decimal('100.00'))
-        self.assertEqual(self.product.max_price, Decimal('100.00'))
-
-    def test_variant_reactivation_restores_bounds(self):
-        """Реактивация варианта — границы восстанавливаются."""
-        self.variant_256.is_active = False
-        self.variant_256.save()
-        self.variant_256.is_active = True
-        self.variant_256.save()
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.min_price, Decimal('100.00'))
-        self.assertEqual(self.product.max_price, Decimal('200.00'))
-
-    def test_variant_delete_updates_bounds(self):
-        """Удаление варианта — границы пересчитываются."""
-        self.variant_256.delete()
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.min_price, Decimal('100.00'))
-        self.assertEqual(self.product.max_price, Decimal('100.00'))
-
-    def test_all_variants_inactive_sets_bounds_none(self):
-        """Все варианты неактивны → min_price = max_price = None."""
-        self.variant_128.is_active = False
-        self.variant_128.save()
-        self.variant_256.is_active = False
-        self.variant_256.save()
-        self.product.refresh_from_db()
-        self.assertIsNone(self.product.min_price)
-        self.assertIsNone(self.product.max_price)
-
-    def test_variant_creation_without_price_keeps_bounds(self):
+    def test_product_cascade_delete_does_not_recompute_prices(self):
         """
-        Создание варианта без цены НЕ меняет границы
-        (поведение сохранено: recalc при создании не нужен — цены нет).
-        """
-        ProductVariant.objects.create(
-            product=self.product, sku='SM-S24-512',
-        )
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.min_price, Decimal('100.00'))
-        self.assertEqual(self.product.max_price, Decimal('200.00'))
-
-    def test_price_relevant_change_writes_through_catalog_contract(self):
-        """
-        Обновление при price-relevant изменении идёт через публичный
-        контракт каталога set_product_prices (ровно один вызов — без
-        сигнального дубля).
+        Product.delete() → CASCADE ProductVariant → post_delete вариантов
+        НЕ должен приводить к попытке повторно обновить уже удаляемый
+        Product через price-recompute wiring (никакого пересчёта/записи).
         """
         from apps.catalog.services.catalog_service import CatalogService
+        from apps.pricing.services.pricing_service import PricingService
         with mock.patch.object(
             CatalogService, 'set_product_prices', return_value=self.product,
-        ) as set_prices:
-            self.variant_256.is_active = False
-            self.variant_256.save()
-        set_prices.assert_called_once_with(
-            self.product,
-            min_price=Decimal('100.00'),
-            max_price=Decimal('100.00'),
-        )
+        ) as set_prices, mock.patch.object(
+            PricingService, 'recalculate_product_bounds',
+        ) as recalc:
+            self.product.delete()
+        set_prices.assert_not_called()
+        recalc.assert_not_called()
+        self.assertFalse(Product.objects.filter(pk=self.product.pk).exists())
 
+    def test_variant_save_does_not_trigger_price_recompute(self):
+        """UPDATE варианта (в т.ч. смена is_active) не пересчитывает цены."""
+        from apps.catalog.services.catalog_service import CatalogService
+        from apps.pricing.services.pricing_service import PricingService
+        with mock.patch.object(
+            CatalogService, 'set_product_prices', return_value=self.product,
+        ) as set_prices, mock.patch.object(
+            PricingService, 'recalculate_product_bounds',
+        ) as recalc:
+            self.variant_128.is_active = False
+            self.variant_128.save()
+            self.variant_128.is_active = True
+            self.variant_128.save()
+        set_prices.assert_not_called()
+        recalc.assert_not_called()
 
-class GetOldIsActiveTests(CatalogTestCase):
-    """
-    ARCH-001 Stage 2: ProductVariant._get_old_is_active().
-
-    Метод заявлен сигналом on_variant_change, но ранее не существовал —
-    любой UPDATE варианта падал с AttributeError (латентный баг).
-    Регрессионные тесты реализации.
-    """
-
-    def test_saved_variant_returns_db_value(self):
-        """Сохранённый вариант → is_active из БД."""
-        self.assertTrue(self.variant_128._get_old_is_active())
-
-    def test_unsaved_variant_returns_none(self):
-        """Несохранённый вариант → None («старого» значения нет)."""
-        fresh = ProductVariant(product=self.product, sku='SM-S24-OLD')
-        self.assertIsNone(fresh._get_old_is_active())
-
-    def test_modified_but_not_saved_returns_previous_value(self):
-        """Изменение в памяти до save() → из БД возвращается СТАРОЕ значение."""
-        self.variant_128.is_active = False  # ещё НЕ сохранено
-        self.assertTrue(self.variant_128._get_old_is_active())
-
-    def test_saved_after_change_returns_previous_value(self):
-        """
-        Сразу после save() метод возвращает значение ДО записи —
-        именно так сигнал on_variant_change детектирует изменение
-        (старое True != новое False → уведомление).
-        """
-        self.variant_128.is_active = False
-        self.variant_128.save()
-        self.assertTrue(self.variant_128._get_old_is_active())
+    def test_variant_delete_does_not_trigger_price_recompute(self):
+        """Удаление отдельного варианта (raw ORM) не пересчитывает цены."""
+        from apps.catalog.services.catalog_service import CatalogService
+        from apps.pricing.services.pricing_service import PricingService
+        with mock.patch.object(
+            CatalogService, 'set_product_prices', return_value=self.product,
+        ) as set_prices, mock.patch.object(
+            PricingService, 'recalculate_product_bounds',
+        ) as recalc:
+            self.variant_256.delete()
+        set_prices.assert_not_called()
+        recalc.assert_not_called()
+        # Осознанный trade-off: bounds остались прежними (не обновлялись).
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('200.00'))
 
 
 @skipIf(

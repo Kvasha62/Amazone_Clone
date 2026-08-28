@@ -9,8 +9,10 @@
 #   get_price_history()            — история изменений
 #   bulk_set_prices()              — массовое обновление
 #   recalculate_product_bounds()   — публичный пересчёт min/max товара
-#                                    (ARCH-001 Stage 2: контракт для
-#                                    price-relevant событий каталога)
+#   set_variant_active()           — SERVICE: смена is_active варианта
+#                                    + пересчёт границ (ARCH-001 Stage 2)
+#   delete_variant()               — SERVICE: удаление варианта
+#                                    + пересчёт границ (ARCH-001 Stage 2)
 #
 # ARCH-001 (Pricing → Catalog ownership):
 #   PricingService НЕ мутирует catalog.Product напрямую.
@@ -173,19 +175,64 @@ class PricingService:
             PricingService.recalculate_product_bounds(variant.product)
 
     @staticmethod
+    @transaction.atomic
+    def set_variant_active(variant, *, is_active: bool) -> None:
+        """
+        ЯВНАЯ SERVICE-координация (ARCH-001 Stage 2): смена is_active
+        варианта + пересчёт price bounds товара.
+
+        Автоматическая реакция pricing на изменение состояния варианта
+        невозможна без нарушения архитектуры: она требует либо reverse
+        dependency (catalog → pricing), либо cross-context Django
+        signal, либо глобальный registry/event bus — все три формы
+        запрещены (ARCHITECTURE.md → Cross-Domain Coordination).
+        Поэтому изменение price-relevant состояния выполняется этим
+        явным сервисным вызовом: видимая точка в коде, явная транзакция.
+
+        ПОТОК:
+            мутация: CatalogService.set_variant_active (catalog-owned)
+            расчёт:  PricingService._compute_price_bounds (pricing-owned)
+            запись:  CatalogService.set_product_prices (единственная точка)
+
+        ВАЖНО: прямое изменение variant.is_active в обход этого метода
+        (admin / raw ORM) оставляет Product.min_price/max_price
+        устаревшими до следующей операции с ценами.
+        """
+        CatalogService.set_variant_active(variant, is_active=is_active)
+        PricingService.recalculate_product_bounds(variant.product)
+
+    @staticmethod
+    @transaction.atomic
+    def delete_variant(variant) -> None:
+        """
+        ЯВНАЯ SERVICE-координация (ARCH-001 Stage 2): удаление варианта
+        + пересчёт price bounds товара (аналог set_variant_active).
+
+        Каскадное удаление товара (Product.delete() → CASCADE вариантов)
+        пересчёт НЕ запускает: товар удаляется целиком, и price-recompute
+        wiring не трогает уже удаляемый Product (регрессионный тест
+        test_product_cascade_delete_does_not_recompute_prices).
+        """
+        product = variant.product
+        CatalogService.delete_variant(variant)
+        PricingService.recalculate_product_bounds(product)
+
+    @staticmethod
     def recalculate_product_bounds(product) -> None:
         """
         Публичный контракт: пересчитать min_price / max_price товара.
 
         ARCH-001 Stage 2 — единственный владелец расчёта price bounds.
-        Вызывается:
-          • из set_price() / remove_price() — после изменения цены;
-          • из контракта каталога notify_price_relevant_state_changed() —
-            когда изменилось price-relevant состояние вариантов
-            (is_active, удаление варианта). Регистрацию выполняет
-            PricingConfig.ready() через
-            register_price_bounds_listener() — БЕЗ Django-сигналов
-            между контекстами и без импорта pricing из catalog.
+        Вызывается из явных service-методов:
+          • set_price() / remove_price() — после изменения цены;
+          • set_variant_active() / delete_variant() — после изменения
+            price-relevant состояния варианта (is_active / удаление);
+          • напрямую вызывающим кодом (seed-команды).
+
+        Автоматической реакции на ORM-события каталога НЕТ: она требует
+        reverse dependency (catalog → pricing), cross-context Django
+        signal или event registry — всё запрещено (ARCHITECTURE.md →
+        Cross-Domain Coordination).
 
         Поток (однонаправленный):
           pricing (расчёт из своих Price, только ACTIVE варианты)
