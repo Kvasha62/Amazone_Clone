@@ -189,6 +189,60 @@ class ProductViewsIncrementTests(CatalogTestCase):
         self.assertEqual(self.product.views_count, 1)
 
 
+class ProductPriceRecalculationTests(CatalogTestCase):
+    """
+    Тесты CatalogService.recalculate_product_prices().
+
+    Это единый авторитетный путь обновления денормализованных
+    Product.min_price / max_price (ARCH-001: Pricing → Catalog ownership).
+    """
+
+    def _priced_variant(self, variant, price):
+        from apps.pricing.models import Price
+        return Price.objects.create(variant=variant, price=Decimal(price))
+
+    def test_recalculate_updates_min_max(self):
+        """min_price / max_price обновляются из цен активных вариантов."""
+        self._priced_variant(self.variant_128, '100.00')
+        self._priced_variant(self.variant_256, '200.00')
+
+        CatalogService.recalculate_product_prices(self.product)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('200.00'))
+
+    def test_recalculate_sets_none_when_no_prices(self):
+        """Нет цен → min_price = max_price = None."""
+        CatalogService.recalculate_product_prices(self.product)
+        self.product.refresh_from_db()
+        self.assertIsNone(self.product.min_price)
+        self.assertIsNone(self.product.max_price)
+
+    def test_recalculate_excludes_inactive_variants(self):
+        """Неактивные варианты не учитываются в min/max."""
+        inactive = self.product.variants.create(
+            sku='SM-S24-INACTIVE',
+            is_active=False,
+        )
+        self._priced_variant(self.variant_128, '100.00')
+        self._priced_variant(inactive, '10.00')
+
+        CatalogService.recalculate_product_prices(self.product)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('100.00'))
+
+    def test_recalculate_uses_lowest_and_highest(self):
+        """min — наименьшая, max — наибольшая из цен всех активных вариантов."""
+        self._priced_variant(self.variant_128, '300.00')
+        self._priced_variant(self.variant_256, '150.00')
+
+        CatalogService.recalculate_product_prices(self.product)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('150.00'))
+        self.assertEqual(self.product.max_price, Decimal('300.00'))
+
+
 class CategoryServiceTests(TestCase):
 
     def setUp(self):

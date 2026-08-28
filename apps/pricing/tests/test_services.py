@@ -2,10 +2,13 @@
 Тесты PricingService.
 """
 from decimal import Decimal
+from unittest import mock
 
 from django.test import TestCase
 from rest_framework.exceptions import ValidationError
 
+from apps.catalog.models import Product
+from apps.catalog.services.catalog_service import CatalogService
 from apps.pricing.models import Price, PriceHistory
 from apps.pricing.services.pricing_service import PricingService
 from apps.pricing.tests.factories import PricingTestCase
@@ -179,3 +182,76 @@ class GetPriceHistoryTests(PricingTestCase):
         PricingService.set_price(self.variant_a, Decimal('200.00'))
         history = PricingService.get_price_history(self.variant_a, limit=1)
         self.assertEqual(history.count(), 1)
+
+
+class PricingCatalogOwnershipTests(PricingTestCase):
+    """
+    ARCH-001 (Pricing → Catalog ownership).
+
+    Проверяют, что PricingService:
+      • НЕ мутирует catalog.Product напрямую;
+      • делегирует пересчёт min_price/max_price в CatalogService;
+      • не создаёт двойного пересчёта (сигналы удалены).
+    """
+
+    def test_set_price_delegates_to_catalog_service(self):
+        """set_price вызывает CatalogService.recalculate_product_prices."""
+        with mock.patch.object(CatalogService, 'recalculate_product_prices') as m:
+            PricingService.set_price(self.variant_a, Decimal('100.00'))
+            m.assert_called_once_with(self.product)
+
+    def test_remove_price_delegates_to_catalog_service(self):
+        """remove_price вызывает CatalogService.recalculate_product_prices."""
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        with mock.patch.object(CatalogService, 'recalculate_product_prices') as m:
+            PricingService.remove_price(self.variant_a)
+            m.assert_called_once_with(self.product)
+
+    def test_no_double_recalculation_on_set(self):
+        """set_price пересчитывает min/max ровно один раз (без второстепенного сигнала)."""
+        with mock.patch.object(CatalogService, 'recalculate_product_prices') as m:
+            PricingService.set_price(self.variant_a, Decimal('100.00'))
+            PricingService.set_price(self.variant_a, Decimal('150.00'))
+            # Первая установка (create) + второе изменение (update) = 2 вызова,
+            # но НИКАКОГО лишнего вызова от signal не происходит.
+            self.assertEqual(m.call_count, 2)
+
+    def test_no_double_recalculation_on_remove(self):
+        """remove_price пересчитывает min/max ровно один раз."""
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        PricingService.set_price(self.variant_b, Decimal('200.00'))
+        with mock.patch.object(CatalogService, 'recalculate_product_prices') as m:
+            PricingService.remove_price(self.variant_a)
+            m.assert_called_once_with(self.product)
+
+    def test_pricing_does_not_directly_mutate_product(self):
+        """
+        PricingService НЕ вызывает Product.save() напрямую:
+        если CatalogService замокать в no-op, то Product.save() не вызывается.
+        """
+        with mock.patch.object(
+            CatalogService, 'recalculate_product_prices', return_value=None,
+        ), mock.patch.object(Product, 'save') as product_save:
+            PricingService.set_price(self.variant_a, Decimal('100.00'))
+            PricingService.set_price(self.variant_b, Decimal('200.00'))
+            PricingService.remove_price(self.variant_a)
+            product_save.assert_not_called()
+
+    def test_raw_orm_price_creation_does_not_recalculate(self):
+        """
+        Cross-domain сигналов больше нет: прямое создание Price через ORM
+        (в обход PricingService) НЕ пересчитывает каталог.Product.
+        Обновление min/max — ответственность CatalogService / PricingService.
+        """
+        Price.objects.create(variant=self.variant_a, price=Decimal('100.00'))
+        self.product.refresh_from_db()
+        self.assertIsNone(self.product.min_price)
+        self.assertIsNone(self.product.max_price)
+
+    def test_set_price_updates_product_via_catalog_contract(self):
+        """Конечный эффект: после set_price min/max на товаре корректны."""
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        PricingService.set_price(self.variant_b, Decimal('200.00'))
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('200.00'))
