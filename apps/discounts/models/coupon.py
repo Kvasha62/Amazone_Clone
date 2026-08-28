@@ -13,7 +13,6 @@
 
 from decimal import Decimal
 
-from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db import models
 
@@ -29,17 +28,15 @@ from apps.discounts.managers.coupon_manager import CouponManager
 
 
 class Coupon(BaseModel):
-    """
-    Купон / промокод.
+    """Купон / промокод.
 
-    СВЯЗИ:
-      • Campaign (FK, nullable) — кампания, к которой принадлежит
-      • Order (M2M, through) — заказы, в которых использован
+    Coupon owns its usage accounting. Active applications are recorded by
+    ``CouponUsage`` and the denormalized ``times_used`` counter is maintained
+    only through ``DiscountService.register_usage/release_usage``.
     """
 
     objects = CouponManager()
 
-    # ── Код промокода (публичный) ──
     code = models.CharField(
         verbose_name='Код купона',
         max_length=MAX_COUPON_CODE_LENGTH,
@@ -47,16 +44,12 @@ class Coupon(BaseModel):
         db_index=True,
         help_text='Уникальный код: SUMMER2025, BLACKFRI50 и т.д.',
     )
-
-    # ── Описание (для админки) ──
     description = models.TextField(
         verbose_name='Описание',
         blank=True,
         default='',
         max_length=MAX_DESCRIPTION_LENGTH,
     )
-
-    # ── Тип и значение скидки ──
     discount_type = models.CharField(
         verbose_name='Тип скидки',
         max_length=10,
@@ -70,10 +63,6 @@ class Coupon(BaseModel):
         validators=[MinValueValidator(Decimal('0.01'))],
         help_text='Процент (1-100) или фиксированная сумма в рублях.',
     )
-
-    # ── Максимальная скидка (для процента) ──
-    # Если discount_type=percent и discount_value=50,
-    # а max_discount=5000 → скидка ≤ 5000₽ даже для заказа 20000₽
     max_discount = models.DecimalField(
         verbose_name='Макс. скидка (₽)',
         max_digits=12,
@@ -82,8 +71,6 @@ class Coupon(BaseModel):
         blank=True,
         help_text='Только для процентной скидки. Ограничивает сверху.',
     )
-
-    # ── Минимальная сумма заказа ──
     min_order_amount = models.DecimalField(
         verbose_name='Мин. сумма заказа',
         max_digits=12,
@@ -91,8 +78,6 @@ class Coupon(BaseModel):
         default=Decimal('0.00'),
         help_text='Заказ должен быть ≥ этой суммы для применения купона.',
     )
-
-    # ── Лимиты использования ──
     max_total_uses = models.PositiveIntegerField(
         verbose_name='Макс. использований (всего)',
         default=MAX_TIMES_USED,
@@ -103,14 +88,10 @@ class Coupon(BaseModel):
         default=1,
         help_text='Сколько раз один пользователь может применить купон.',
     )
-
-    # ── Счётчики ──
     times_used = models.PositiveIntegerField(
         verbose_name='Использован (раз)',
         default=0,
     )
-
-    # ── Срок действия ──
     started_at = models.DateTimeField(
         verbose_name='Действует с',
         db_index=True,
@@ -119,8 +100,6 @@ class Coupon(BaseModel):
         verbose_name='Действует до',
         db_index=True,
     )
-
-    # ── Кампания (опционально) ──
     campaign = models.ForeignKey(
         'discounts.Campaign',
         on_delete=models.SET_NULL,
@@ -129,8 +108,6 @@ class Coupon(BaseModel):
         related_name='coupons',
         verbose_name='Кампания',
     )
-
-    # ── Флаг активности ──
     is_active = models.BooleanField(
         verbose_name='Активен',
         default=True,
@@ -153,31 +130,20 @@ class Coupon(BaseModel):
 
     @property
     def is_valid_now(self) -> bool:
-        """True если купон активен и дата действия."""
+        """True if the coupon is active and within its validity window."""
         from django.utils import timezone
         now = timezone.now()
-        return (
-            self.is_active
-            and self.started_at <= now <= self.ended_at
-        )
+        return self.is_active and self.started_at <= now <= self.ended_at
 
     @property
     def is_exhausted(self) -> bool:
-        """True если лимит использований исчерпан."""
+        """True if the global usage limit is exhausted."""
         if self.max_total_uses == 0:
             return False
         return self.times_used >= self.max_total_uses
 
     def calculate_discount(self, order_amount: Decimal) -> Decimal:
-        """
-        Вычисляет сумму скидки для заданной суммы заказа.
-
-        АЛГОРИТМ:
-          • percent: discount = order_amount * (discount_value / 100)
-                      capped by max_discount
-          • fixed: discount = discount_value
-                      capped by order_amount (скидка ≤ суммы)
-        """
+        """Calculate the discount amount without changing persistent state."""
         if self.discount_type == DISCOUNT_TYPE_PERCENT:
             discount = order_amount * (self.discount_value / Decimal('100'))
             if self.max_discount is not None:
@@ -185,6 +151,5 @@ class Coupon(BaseModel):
         else:
             discount = self.discount_value
 
-        # Скидка не может превышать сумму заказа
         discount = min(discount, order_amount)
         return discount.quantize(Decimal('0.01'))
