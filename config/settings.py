@@ -73,13 +73,13 @@ INSTALLED_APPS = [
     "apps.analytics",
 ]
 
-# ── PostgreSQL-specific ──
-# django.contrib.postgres нужен для SearchVectorField, GinIndex и т.д.
-# На SQLite он не нужен и вызывает проблемы с миграциями.
-# DB_ENGINE читается из .env (загружен выше через load_dotenv).
-DB_ENGINE = os.getenv("DB_ENGINE", "django.db.backends.sqlite3")
-if DB_ENGINE == "django.db.backends.postgresql":
-    INSTALLED_APPS.insert(6, "django.contrib.postgres")
+# ── PostgreSQL: единственная поддерживаемая БД ──
+# django.contrib.postgres всегда нужен для SearchVectorField, GinIndex,
+# partial indexes и CheckConstraint с Q-conditions.
+# Добавляем безусловно — проект требует PostgreSQL (docker-compose.yml: postgres:18).
+INSTALLED_APPS.insert(6, "django.contrib.postgres")
+
+DB_ENGINE = os.getenv("DB_ENGINE", "django.db.backends.postgresql")
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",

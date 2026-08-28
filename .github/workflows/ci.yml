@@ -1,5 +1,5 @@
 # ────────────────────────────────────────────────────────────────────────
-# .github/workflows/ci.yml — CI Foundation for Amazone_Clone
+# .github/workflows/ci.yml — PostgreSQL CI for Amazone_Clone
 #
 # Triggers:
 #   - push to main
@@ -10,8 +10,7 @@
 #   2. Migration check         (python manage.py makemigrations --check)
 #   3. Test suite              (python manage.py test)
 #
-# Database: SQLite (no PostgreSQL service needed).
-# PostgreSQL-only tests are automatically skipped via @skipIf.
+# Database: PostgreSQL 18 (the sole supported database).
 #
 # Python: 3.13 (matches production)
 # Django: 6.1 (installed from requirements.txt)
@@ -29,10 +28,30 @@ jobs:
   ci:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: amazone_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d amazone_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       DJANGO_SETTINGS_MODULE: config.settings
-      DB_ENGINE: ""
-      DJANGO_SECRET_KEY: "ci-insecure-key-do-not-use-in-production"
+      DB_ENGINE: django.db.backends.postgresql
+      DB_NAME: amazone_ci
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DJANGO_SECRET_KEY: ci-insecure-key-do-not-use-in-production
       DJANGO_DEBUG: "False"
 
     steps:
@@ -53,6 +72,9 @@ jobs:
 
       - name: Migration check
         run: python manage.py makemigrations --check --dry-run
+
+      - name: Apply migrations
+        run: python manage.py migrate --noinput
 
       - name: Run tests
         run: python manage.py test --verbosity 2
