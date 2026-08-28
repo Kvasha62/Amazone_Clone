@@ -6,13 +6,16 @@
 #   get_price()               — получить объект цены
 #   get_effective_price()     — получить эффективную цену (Decimal)
 #   remove_price()            — удалить цену варианта
-#   recalculate_product_prices() — пересчитать Product.min_price/max_price
 #   get_price_history()       — история изменений
 #   bulk_set_prices()         — массовое обновление
 #
-# КЛЮЧЕВАЯ ФУНКЦИЯ: recalculate_product_prices()
-#   Агрегирует min/max из цен активных вариантов и обновляет Product.
-#   Вызывается автоматически при каждом изменении цены.
+# ARCH-001 (Pricing → Catalog ownership):
+#   PricingService НЕ мутирует catalog.Product напрямую.
+#   `pricing` рассчитывает min_price/max_price из своих цен (Price)
+#   и передаёт готовые значения в публичный контракт каталога
+#   CatalogService.set_product_prices(product, min_price=..., max_price=...).
+#   Проверьте: dependency graph — pricing → CatalogService → catalog.Product,
+#   без обратной зависимости catalog → pricing.
 #
 # 📖 https://docs.djangoproject.com/en/stable/topics/db/transactions/
 # 📖 https://docs.djangoproject.com/en/stable/ref/models/expressions/#f-expressions
@@ -27,6 +30,7 @@ from decimal import Decimal
 from django.db import transaction
 from rest_framework.exceptions import NotFound, ValidationError
 
+from apps.catalog.services.catalog_service import CatalogService
 from apps.pricing.models import Price, PriceHistory
 
 logger = logging.getLogger(__name__)
@@ -113,7 +117,16 @@ class PricingService:
             )
 
         # ── Пересчёт денормализованных цен на товаре ──
-        PricingService.recalculate_product_prices(variant.product)
+        # ARCH-001 (Pricing → Catalog ownership):
+        #   `pricing` САМ рассчитывает min_price/max_price из своих цен,
+        #   а затем передаёт готовые значения в публичный контракт каталога.
+        #   `pricing` НЕ мутирует catalog.Product и не читает его напрямую.
+        min_price, max_price = PricingService._compute_price_bounds(variant.product)
+        CatalogService.set_product_prices(
+            variant.product,
+            min_price=min_price,
+            max_price=max_price,
+        )
 
         return price_obj
 
@@ -158,67 +171,52 @@ class PricingService:
         """
         deleted, _ = Price.objects.filter(variant=variant).delete()
         if deleted:
-            PricingService.recalculate_product_prices(variant.product)
+            # ARCH-001: `pricing` рассчитывает границы и передаёт их каталогу.
+            min_price, max_price = PricingService._compute_price_bounds(variant.product)
+            CatalogService.set_product_prices(
+                variant.product,
+                min_price=min_price,
+                max_price=max_price,
+            )
 
     @staticmethod
-    def recalculate_product_prices(product) -> None:
+    def _compute_price_bounds(product) -> tuple[Decimal | None, Decimal | None]:
         """
-        Пересчитывает денормализованные min_price / max_price на Product.
+        Рассчитывает min_price / max_price для товара из его цен.
+
+        Данные о ценах принадлежат bounded context `pricing`, поэтому
+        расчёт выполняется здесь и передаётся в каталог готовым.
 
         АЛГОРИТМ:
-          1. SELECT price FROM pricing_price
-             INNER JOIN catalog_productvariant ON ...
-             WHERE product_id = X AND variant.is_active = True
-          2. product.min_price = MIN(prices)
-             product.max_price = MAX(prices)
-          3. UPDATE catalog_product SET min/max WHERE id = X
+          1. Берём цены активных вариантов товара (variant.is_active=True).
+          2. min_price = MIN(price), max_price = MAX(price).
+          3. Если цены нет → (None, None).
 
-        ПОЧЕМУ ТОЛЬКО АКТИВНЫЕ ВАРИАНТЫ:
-          Неактивный вариант (is_active=False) не виден в каталоге.
-          Если учитывать его цену → min_price может быть занижен
-          неактивным вариантом, которого никто не может купить.
-
-        ПОЧЕМУ values_list('price', flat=True):
-          Нужны только числа, не объекты Price → быстрее (меньше данных).
-          flat=True → [Decimal('100.00'), Decimal('200.00'), ...]
-          Без flat → [('price',), ('price',), ...]
-
-        📖 https://docs.djangoproject.com/en/stable/ref/models/querysets/#values-list
+        ВАЖНО: только активные варианты участвуют в расчёте — неактивный
+        вариант не виден в каталоге и не должен занижать/завышать цену.
         """
-        from apps.pricing.models import Price
-
-        # values_list('price', flat=True) — только столбец price, плоским списком.
         prices = (
             Price.objects
-            # variant__product=product — JOIN через FK variant → product
-            # variant__is_active=True — только активные варианты
             .filter(variant__product=product, variant__is_active=True)
             .values_list('price', flat=True)
         )
 
         if prices:
-            # min() / max() — Python builtins, работают с Decimal.
-            product.min_price = min(prices)
-            product.max_price = max(prices)
+            min_price = min(prices)
+            max_price = max(prices)
         else:
-            # Нет цен → NULL (товар без вариантов / все варианты без цен).
-            product.min_price = None
-            product.max_price = None
-
-        # update_fields — обновляем ТОЛЬКО min_price и max_price.
-        # НЕ трогаем другие поля (name, rating, ...) → оптимально.
-        # NOTE: BaseModel.update_at НЕ обновляем — это денормализованные
-        # данные, не стоит сбрасывать updated_at товара из-за пересчёта.
-        product.save(update_fields=['min_price', 'max_price'])
+            min_price = None
+            max_price = None
 
         logger.debug(
-            'product_prices_recalculated',
+            'product_price_bounds_computed',
             extra={
                 'product_id': product.pk,
-                'min_price': str(product.min_price),
-                'max_price': str(product.max_price),
+                'min_price': str(min_price),
+                'max_price': str(max_price),
             },
         )
+        return min_price, max_price
 
     @staticmethod
     def get_price_history(variant, limit: int = 50):

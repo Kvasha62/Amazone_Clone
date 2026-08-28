@@ -457,6 +457,48 @@ class CatalogService:
         # Делегируем модели — инкапсуляция бизнес-правила.
         product.increment_views()
 
+    @staticmethod
+    def set_product_prices(
+        product: Product,
+        *,
+        min_price: Decimal | None,
+        max_price: Decimal | None,
+    ) -> Product:
+        """
+        Обновляет денормализованные min_price / max_price на Product.
+
+        Это ЕДИНСТВЕННАЯ точка mutation цен товара в bounded context
+        `catalog`. Она принимает УЖЕ РАССЧИТАННЫЕ значения и только
+        записывает их в catalog.Product.
+
+        ARCH-001 (Pricing → Catalog ownership):
+          • Расчёт min_price/max_price — ответственность `pricing`
+            (PricingService собирает цены активных вариантов и передаёт
+            результат сюда).
+          • `catalog` НЕ читает и НЕ ищет цены из `pricing` — никакой
+            обратной зависимости catalog → pricing нет.
+          • `pricing` не имеет права мутировать `catalog.Product`
+            напрямую, поэтому вызывает этот публичный контракт.
+
+        АЛГОРИТМ:
+          1. product.min_price = переданное значение (None = цен нет).
+          2. product.max_price = переданное значение.
+          3. Сохранить ТОЛЬКО эти поля (не трогаем name/rating/...).
+        """
+        product.min_price = min_price
+        product.max_price = max_price
+        product.save(update_fields=['min_price', 'max_price', 'updated_at'])
+
+        logger.debug(
+            'product_prices_updated',
+            extra={
+                'product_id': product.pk,
+                'min_price': str(product.min_price),
+                'max_price': str(product.max_price),
+            },
+        )
+        return product
+
     # ----------------------------------------------------------
     # Категории
     # ----------------------------------------------------------

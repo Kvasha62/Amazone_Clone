@@ -2,10 +2,12 @@
 Тесты PricingService.
 """
 from decimal import Decimal
+from unittest import mock
 
 from django.test import TestCase
 from rest_framework.exceptions import ValidationError
 
+from apps.catalog.services.catalog_service import CatalogService
 from apps.pricing.models import Price, PriceHistory
 from apps.pricing.services.pricing_service import PricingService
 from apps.pricing.tests.factories import PricingTestCase
@@ -179,3 +181,103 @@ class GetPriceHistoryTests(PricingTestCase):
         PricingService.set_price(self.variant_a, Decimal('200.00'))
         history = PricingService.get_price_history(self.variant_a, limit=1)
         self.assertEqual(history.count(), 1)
+
+
+class PricingCatalogOwnershipTests(PricingTestCase):
+    """
+    ARCH-001 (Pricing → Catalog ownership).
+
+    Проверяют архитектуру зависимости:
+      pricing → CatalogService.set_product_prices → catalog.Product
+
+    Без обратной зависимости catalog → pricing и без двойного пересчёта.
+    """
+
+    def test_set_price_passes_computed_bounds_to_catalog(self):
+        """
+        set_price САМ рассчитывает min/max и передаёт готовые значения
+        в CatalogService.set_product_prices (не мутирует Product.save()).
+        """
+        with mock.patch.object(
+            CatalogService, 'set_product_prices', return_value=self.product,
+        ) as set_prices:
+            PricingService.set_price(self.variant_a, Decimal('100.00'))
+            set_prices.assert_called_once_with(
+                self.product,
+                min_price=Decimal('100.00'),
+                max_price=Decimal('100.00'),
+            )
+
+    def test_remove_price_passes_computed_bounds_to_catalog(self):
+        """remove_price также передаёт рассчитанные границы в каталог."""
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        PricingService.set_price(self.variant_b, Decimal('200.00'))
+        with mock.patch.object(
+            CatalogService, 'set_product_prices', return_value=self.product,
+        ) as set_prices:
+            PricingService.remove_price(self.variant_a)
+            set_prices.assert_called_once_with(
+                self.product,
+                min_price=Decimal('200.00'),
+                max_price=Decimal('200.00'),
+            )
+
+    def test_set_price_recomputes_exactly_once(self):
+        """set_price пересчитывает min/max ровно один раз (без сигнального дубля)."""
+        with mock.patch.object(
+            CatalogService, 'set_product_prices', return_value=self.product,
+        ) as set_prices:
+            PricingService.set_price(self.variant_a, Decimal('100.00'))
+            # create → ровно 1 вызов каталога, никакого второго от signal.
+            self.assertEqual(set_prices.call_count, 1)
+
+    def test_update_price_recomputes_exactly_once(self):
+        """Обновление существующей цены — тоже ровно один пересчёт."""
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        with mock.patch.object(
+            CatalogService, 'set_product_prices', return_value=self.product,
+        ) as set_prices:
+            PricingService.set_price(self.variant_a, Decimal('150.00'))
+            self.assertEqual(set_prices.call_count, 1)
+
+    def test_remove_price_recomputes_exactly_once(self):
+        """remove_price пересчитывает min/max ровно один раз."""
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        with mock.patch.object(
+            CatalogService, 'set_product_prices', return_value=self.product,
+        ) as set_prices:
+            PricingService.remove_price(self.variant_a)
+            set_prices.assert_called_once()
+
+    def test_raw_orm_price_creation_does_not_recalculate(self):
+        """
+        Cross-domain сигналов больше нет: прямое создание Price через ORM
+        (в обход PricingService) НЕ пересчитывает каталог.Product.
+        Обновление min/max — ответственность PricingService / CatalogService.
+        """
+        Price.objects.create(variant=self.variant_a, price=Decimal('100.00'))
+        self.product.refresh_from_db()
+        self.assertIsNone(self.product.min_price)
+        self.assertIsNone(self.product.max_price)
+
+    def test_set_price_updates_product_via_catalog_contract(self):
+        """Реальный путь: после set_price min/max на товаре корректны."""
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        PricingService.set_price(self.variant_b, Decimal('200.00'))
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('200.00'))
+
+    def test_only_active_variants_are_used_in_bounds(self):
+        """Неактивные варианты не участвуют в расчёте (только ACTIVE)."""
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        PricingService.set_price(self.variant_inactive, Decimal('10.00'))
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('100.00'))
+
+    def test_no_prices_sets_none(self):
+        """Отсутствие цен → min_price = max_price = None."""
+        self.product.refresh_from_db()
+        self.assertIsNone(self.product.min_price)
+        self.assertIsNone(self.product.max_price)
