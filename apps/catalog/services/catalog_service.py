@@ -80,6 +80,39 @@ from apps.catalog.models import (
 logger = logging.getLogger(__name__)
 
 
+# ────────────────────────────────────────────────────────────
+# ARCH-001 Stage 2: обновление Product.min_price/max_price.
+#
+# ПРОБЛЕМА:
+#   Product.min_price/max_price зависят и от состояния вариантов
+#   каталога (is_active, удаление варианта), и от цен pricing.
+#   Раньше каталог сам пересчитывал границы, читая цены pricing
+#   через ORM-lookup `variant.price` (JOIN на таблицу цен pricing) —
+#   это запрещённая обратная зависимость catalog → pricing.
+#
+# РЕШЕНИЕ (ARCHITECTURE.md → «Cross-Domain Coordination»):
+#   Единственный легитимный механизм cross-domain координации —
+#   ЯВНЫЕ service-вызовы с видимой точкой в коде и явной транзакцией:
+#
+#     PricingService.recalculate_product_bounds(product)
+#       → расчёт min/max из СВОИХ данных pricing
+#       → CatalogService.set_product_prices(product, min_price, max_price)
+#       → catalog.Product
+#
+#   АВТОМАТИЧЕСКОЙ реакции каталога на изменение is_active/удаление
+#   варианта НЕТ и быть не может без нарушения архитектуры: любая
+#   механика авто-реакции — это либо reverse dependency
+#   (catalog → pricing), либо cross-context Django signal, либо
+#   глобальный registry/event bus — все три формы запрещены
+#   (ARCHITECTURE.md: «explicit service calls» — primary mechanism;
+#   сигналы — только same-domain). Поэтому изменение price-relevant
+#   состояния варианта выполняется ТОЛЬКО через явные сервисные
+#   методы (см. PricingService.set_variant_active / delete_variant).
+#   Каталог предоставляет catalog-owned мутации (ниже), pricing —
+#   оркестрацию и расчёт. Никаких реестров, локаторов и событий.
+# ────────────────────────────────────────────────────────────
+
+
 class CatalogService:
     """
     Бизнес-логика каталога.
@@ -498,6 +531,50 @@ class CatalogService:
             },
         )
         return product
+
+    # ----------------------------------------------------------
+    # Варианты: catalog-owned мутации price-relevant состояния
+    # ----------------------------------------------------------
+
+    @staticmethod
+    def set_variant_active(variant: ProductVariant, *, is_active: bool) -> ProductVariant:
+        """
+        Меняет is_active варианта. ТОЛЬКО мутация каталога.
+
+        ARCH-001 Stage 2: цены здесь НЕ пересчитываются — каталог не
+        умеет считать price bounds (не читает pricing). Оркестрацию
+        «мутация + пересчёт» выполняет владелец цен:
+        PricingService.set_variant_active() (явный service-вызов,
+        ARCHITECTURE.md → Cross-Domain Coordination).
+
+        ИЗМЕНЕНИЕ ЭТОГО МЕТОДА В ОБХОД СЕРВИСА PRICING (admin, raw ORM)
+        ОСТАВЛЯЕТ min_price/max_price ТОВАРА УСТАРЕВШИМИ ДО СЛЕДУЮЩЕЙ
+        ОПЕРАЦИИ С ЦЕНАМИ — так задумано (осознанный trade-off
+        однонаправленной архитектуры, см. ARCHITECTURE.md).
+        """
+        variant.is_active = is_active
+        variant.save(update_fields=['is_active', 'updated_at'])
+
+        logger.debug(
+            'variant_activity_updated',
+            extra={'variant_id': variant.pk, 'is_active': is_active},
+        )
+        return variant
+
+    @staticmethod
+    def delete_variant(variant: ProductVariant) -> None:
+        """
+        Удаляет вариант. ТОЛЬКО мутация каталога (аналогично
+        set_variant_active: пересчёт цен — обязанность PricingService,
+        см. PricingService.delete_variant()).
+        """
+        variant_id = variant.pk
+        variant.delete()
+
+        logger.debug(
+            'variant_deleted',
+            extra={'variant_id': variant_id},
+        )
 
     # ----------------------------------------------------------
     # Категории

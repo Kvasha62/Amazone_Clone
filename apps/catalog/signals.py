@@ -2,25 +2,27 @@
 # signals.py — сигналы для автоматического обновления
 # денормализованных данных и поискового индекса.
 #
-# ЧЕТЫРЕ ГРУППЫ СИГНАЛОВ:
+# ТРИ ГРУППЫ СИГНАЛОВ (только LOCAL внутри catalog):
 #   1. Главное изображение → Product.main_image
-#   2. Пересчёт min_price/max_price при изменении цен
-#   3. Пересчёт min_price/max_price при изменении вариантов
-#   4. Обновление search_vector при изменении name/description
+#   2. Пояснение: price-relevant изменения вариантов ОБРАБАТЫВАЮТСЯ
+#      НЕ сигналами (явные service-вызовы, см. блок ниже)
+#   3. Обновление search_vector при изменении name/description
 #
 # АРХИТЕКТУРНЫЙ ПРИНЦИП:
 #   Сигналы — автоматические обработчики событий ORM.
 #   Когда модель сохраняется/удаляется → сигнал запускается.
-#   Без сигналов: пришлось бы вручную вызывать
-#   product.recalculate_prices() после каждого изменения варианта.
-#   Забыл один раз → цены устарели → баг в каталоге.
+#
+#   ARCH-001 Stage 2: здесь НЕТ никакой ценовой логики. Пересчёт
+#   Product.min_price/max_price — cross-domain операция (вариант —
+#   catalog, цены — pricing), выполняется ТОЛЬКО явными service-
+#   вызовами PricingService (см. ARCHITECTURE.md → Cross-Domain
+#   Coordination). Все сигналы этого файла — LOCAL внутри catalog.
 #
 # ВНИМАНИЕ: сигналы выполняются СИНХРОННО в том же процессе.
 # Для высоконагруженных проектов → вынести в Celery tasks.
 #
 # ЧТО БУДЕТ, ЕСЛИ УДАЛИТЬ ФАЙЛ:
 #   - main_image не обновляется автоматически → пустые карточки
-#   - min_price/max_price не пересчитываются → устаревшие цены
 #   - search_vector не обновляется → поиск не находит новые товары
 # ────────────────────────────────────────────────────────────
 
@@ -122,107 +124,38 @@ def clear_product_main_image_on_delete(sender, instance, **kwargs):
 
 
 # ==========================================================
-# 2. Пересчёт min_price / max_price при изменении цен
+# 2. Price-relevant изменения вариантов — НАМЕРЕННО НЕ ЗДЕСЬ
 # ==========================================================
 
-# Этот сигнал подключается к модели цены варианта (pricing-модуль).
-# Имя модели зависит от вашего apps.pricing — укажите правильное.
+# ARCH-001 Stage 2: автоматической реакции на изменение is_active /
+# удаление варианта НЕТ. Пересчёт Product.min_price/max_price — это
+# cross-domain операция: состояние варианта принадлежит `catalog`,
+# цены — `pricing`. Любая механика автоматической реакции требует
+# либо reverse dependency (catalog → pricing), либо cross-context
+# Django signal, либо глобальный registry/event bus — все три формы
+# запрещены архитектурой (ARCHITECTURE.md → Cross-Domain Coordination:
+# primary mechanism — explicit service calls; сигналы — только
+# same-domain).
 #
-# Если pricing-модуль ещё не готов, закомментируйте signal ниже
-# и вызывайте product.recalculate_prices() вручную из сервиса.
-
-
-def _recalculate_product_prices(variant):
-    """
-    Пересчитывает min_price / max_price у товара,
-    которому принадлежит variant.
-
-    Вспомогательная функция — вызывается из нескольких сигналов.
-
-    ПОЧЕМУ НЕ @staticmethod В КЛАССЕ:
-        Это внутренняя функция (underscore prefix), не часть API.
-        Используется только внутри этого файла.
-
-    ПОЧЕМУ try/except Product.DoesNotExist:
-        Вариант может быть «сиротой» (product удалён, но variant остался).
-        Это защита от ошибки в таких случаях.
-    """
-    from apps.catalog.models import Product
-
-    try:
-        product = Product.objects.get(pk=variant.product_id)
-    except Product.DoesNotExist:
-        # Товар удалён — ничего пересчитывать.
-        return
-    # product.recalculate_prices() — метод модели Product:
-    # агрегирует min/max из активных вариантов и обновляет поля.
-    product.recalculate_prices()
-
-
-# Сигналы для pricing-модуля ЗАКОММЕНТИРОВАНЫ:
-# они подключатся когда pricing app будет готов.
-# Это сделано чтобы catalog работал независимо от pricing.
+# ЕДИНСТВЕННЫЙ легитимный путь изменения price-relevant состояния
+# варианта — явные сервисные вызовы (видимая точка в коде, явная
+# транзакция):
 #
-# @receiver(post_save, sender='pricing.ProductVariantPrice')
-# def on_price_change(sender, instance, **kwargs):
-#     """Пересчитываем цены товара при изменении цены варианта."""
-#     variant = instance.variant
-#     _recalculate_product_prices(variant)
+#   PricingService.set_variant_active(variant, is_active=...)   # True→False / False→True
+#   PricingService.delete_variant(variant)                      # удаление варианта
 #
+# Оба метода: мутация через CatalogService (catalog-owned) + пересчёт
+# границ PricingService.recalculate_product_bounds (pricing-owned) →
+# CatalogService.set_product_prices (единственная точка mutation
+# Product.min_price/max_price). Поток: pricing → catalog.
 #
-# @receiver(post_delete, sender='pricing.ProductVariantPrice')
-# def on_price_delete(sender, instance, **kwargs):
-#     """Пересчитываем цены товара при удалении цены варианта."""
-#     variant = instance.variant
-#     _recalculate_product_prices(variant)
+# Изменение is_active напрямую (admin/raw ORM) оставляет min/max
+# устаревшими до следующей операции с ценами — осознанный trade-off,
+# задокументированный в ARCHITECTURE.md.
 
 
 # ==========================================================
-# 3. Пересчёт min_price / max_price при изменении варианта
-# ==========================================================
-
-@receiver(post_save, sender='catalog.ProductVariant')
-def on_variant_change(sender, instance, **kwargs):
-    """
-    При изменении is_active у варианта — пересчитываем цены товара.
-    Деактивация варианта может изменить min_price / max_price.
-
-    ПОЧЕМУ НЕ ПРИ СОЗДАНИИ:
-        Новый вариант ещё не имеет цены (price = None).
-        Пересчёт сейчас бесполезен — prices уже актуальны.
-        Цены обновятся когда к варианту привяжут Price (через pricing signal).
-
-    ПОЧЕМУ ПРОВЕРЯЕМ _get_old_is_active:
-        variant.save() вызывается при ЛЮБОМ изменении (имя, вес, SKU...).
-        Если is_active не менялся — пересчёт не нужен (лишний SQL).
-        Проверяем только изменение is_active → оптимально.
-    """
-    # created=False — только при ОБНОВЛЕНИИ, не при создании.
-    if not kwargs.get('created', False):
-        # _get_old_is_active() — метод модели ProductVariant:
-        # сравнивает текущее is_active с сохранённым ранее значением.
-        old = instance._get_old_is_active()
-        # old is not None — защита при первом сохранении (нет «старого» значения).
-        # old != instance.is_active — значение ИЗМЕНИЛОСЬ.
-        if old is not None and old != instance.is_active:
-            _recalculate_product_prices(instance)
-
-
-# При удалении варианта — всегда пересчитываем (вариант исчез из расчёта).
-@receiver(post_delete, sender='catalog.ProductVariant')
-def on_variant_delete(sender, instance, **kwargs):
-    """
-    При удалении варианта — пересчитываем цены товара.
-
-    ПОЧЕМУ БЕЗ ПРОВЕРКИ:
-        Удалённый вариант больше не участвует в min/max расчёте.
-        Всегда пересчитываем — удаление варианта всегда влияет на цены.
-    """
-    _recalculate_product_prices(instance)
-
-
-# ==========================================================
-# 4. Search vector обновление
+# 3. Search vector обновление
 # ==========================================================
 
 @receiver(post_save, sender='catalog.Product')

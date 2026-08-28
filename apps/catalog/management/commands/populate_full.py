@@ -51,6 +51,7 @@ from apps.notifications.models import Notification
 from apps.orders.models import Order, OrderItem
 from apps.payments.models import Payment, PaymentEvent
 from apps.pricing.models import Price, PriceHistory
+from apps.pricing.services.pricing_service import PricingService
 from apps.reviews.models import Review, ReviewHelpfulVote, ReviewImage
 from apps.shipping.models import Shipment, ShippingMethod, ShippingZone
 from apps.users.models import Address, User, UserProfile
@@ -466,7 +467,11 @@ class Command(BaseCommand):
 
                 all_variants.append((variant, base_price, sale_price))
 
-            product.recalculate_prices()
+            # ARCH-001 Stage 2: Product.recalculate_prices() удалён — он
+            # читал цены pricing из каталога. Здесь цен ещё нет: границы
+            # пересчитываются в _create_prices_and_history() ПОСЛЕ
+            # создания Price (раньше этот вызов всегда давал None —
+            # wiring исправлен).
             products.append(product)
 
         self.stdout.write(f'   📦 Товары: {len(products)}, варианты: {len(all_variants)}')
@@ -501,6 +506,12 @@ class Command(BaseCommand):
                 reason='Начальное ценообразование',
             )
             count_h += 1
+
+        # ARCH-001 Stage 2: после создания цен пересчитываем min/max
+        # каждого затронутого товара через контракт
+        # pricing → CatalogService.set_product_prices.
+        for product in {variant.product for variant, _, _ in variants}:
+            PricingService.recalculate_product_bounds(product)
 
         self.stdout.write(f'   💰 Цены: {count_p}, история: {count_h}')
 

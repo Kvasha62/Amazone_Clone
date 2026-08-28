@@ -2,6 +2,7 @@
 Тесты CatalogService — бизнес-логика каталога.
 """
 from decimal import Decimal
+from pathlib import Path
 
 from django.test import TestCase
 from rest_framework.exceptions import NotFound, ValidationError
@@ -305,6 +306,79 @@ class CatalogNoPricingDependencyTests(TestCase):
         self.assertIn('product.min_price', source)
         self.assertIn('product.max_price', source)
         self.assertIn('product.save', source)
+
+    # ── ARCH-001 Stage 2: всё production-дерево каталога ──
+
+    # Production-код каталога. management/commands (populate_*) — dev-тулинг:
+    # он легитимно создаёт pricing-фикстуры при сеянии и исключён
+    # из проверки (как и tests/).
+    PRODUCTION_SUBPATHS = (
+        'apps/catalog/apps.py',
+        'apps/catalog/constants.py',
+        'apps/catalog/urls.py',
+        'apps/catalog/signals.py',
+        'apps/catalog/admin',
+        'apps/catalog/api_views',
+        'apps/catalog/managers',
+        'apps/catalog/models',
+        'apps/catalog/querysets',
+        'apps/catalog/serializers',
+        'apps/catalog/services',
+    )
+
+    def _production_sources(self):
+        """Исходники production-кода каталога: (path, source)."""
+        repo_root = Path(__file__).resolve().parents[3]
+        for sub in self.PRODUCTION_SUBPATHS:
+            path = repo_root / sub
+            if path.is_file():
+                yield path, path.read_text(encoding='utf-8')
+            elif path.is_dir():
+                for py_file in sorted(path.rglob('*.py')):
+                    yield py_file, py_file.read_text(encoding='utf-8')
+
+    def test_production_catalog_does_not_import_pricing(self):
+        """
+        Ни один production-модуль catalog не импортирует apps.pricing.
+
+        ARCH-001 Stage 2: единственное направление зависимости —
+        pricing → catalog. Каталог общается с pricing только через
+        контракт слушателей (динамический колбэк, без импорта).
+        """
+        for path, source in self._production_sources():
+            modules = self._imported_modules(source)
+            bad = [
+                m for m in modules
+                if m == 'apps.pricing' or m.startswith('apps.pricing.')
+            ]
+            self.assertEqual(
+                bad, [],
+                f'{path} импортирует pricing — запрещённая обратная '
+                f'зависимость catalog → pricing: {bad}',
+            )
+
+    def test_production_catalog_has_no_price_price_lookup(self):
+        """
+        Нигде в production-каталоге нет ORM-lookup `price__price`
+        (чтение таблицы цен pricing через JOIN из каталога).
+        """
+        for path, source in self._production_sources():
+            self.assertNotIn(
+                'price__price', source,
+                f'{path} читает цены через price__price — обратная '
+                f'зависимость catalog → pricing',
+            )
+
+    def test_product_model_has_no_recalculate_prices(self):
+        """
+        Product.recalculate_prices() удалён (ARCH-001 Stage 2):
+        модель каталога больше не умеет читать цены pricing.
+        """
+        self.assertFalse(
+            hasattr(Product, 'recalculate_prices'),
+            'Product.recalculate_prices должен быть удалён — '
+            'расчёт границ теперь в pricing, запись в CatalogService.',
+        )
 
 
 class CategoryServiceTests(TestCase):

@@ -13,25 +13,17 @@
 #   `catalog` НЕ читает цены из pricing → зависимость однонаправленная
 #   (pricing → catalog → catalog.Product). Здесь нет cross-domain сигналов.
 #
+# ARCH-001 Stage 2: при price-relevant изменении вариантов каталога
+#   (is_active, удаление варианта) автоматической реакции НЕТ — она
+#   невозможна без нарушения архитектуры (reverse dependency /
+#   cross-context signal / event registry). Используются явные
+#   service-вызовы (ARCHITECTURE.md → Cross-Domain Coordination):
+#   PricingService.set_variant_active() / delete_variant() /
+#   recalculate_product_bounds(). Направление зависимости — только
+#   pricing → catalog.
+#
+# AppConfig (PricingConfig) живёт в apps/pricing/apps.py — Django ≥ 4.1
+# автоматически использует AppConfig-класс именно из модуля apps.py.
+#
 # 📖 https://docs.djangoproject.com/en/stable/ref/applications/
 # ────────────────────────────────────────────────────────────────────────
-
-from django.apps import AppConfig
-
-
-class PricingConfig(AppConfig):
-    """
-    Конфигурация модуля ценообразования.
-
-    Расчёт денормализованных цен товара выполняется в `pricing`
-    (PricingService), а запись в `catalog.Product` — через публичный
-    контракт CatalogService.set_product_prices() (см. ARCH-001).
-    """
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'apps.pricing'
-    verbose_name = 'Ценообразование'
-
-    def ready(self):
-        # ARCH-001: cross-domain сигналы на пересчёт Product.min_price/max_price
-        # удалены. Цены товара обновляет только каталог своим сервисом.
-        pass
