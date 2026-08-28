@@ -35,6 +35,7 @@ from decimal import Decimal
 from django.db import transaction
 from rest_framework.exceptions import NotFound, ValidationError
 
+from apps.catalog.models import Product
 from apps.catalog.services.catalog_service import CatalogService
 from apps.pricing.models import Price, PriceHistory
 
@@ -47,6 +48,24 @@ class PricingService:
 
     Все mutating-методы обёрнуты в transaction.atomic.
     """
+
+    @staticmethod
+    def _locked_product(product_id) -> Product:
+        """
+        SELECT ... FOR UPDATE по authoritative строке Product.
+
+        ARCH-001 Stage 2 (correction): стратегия конкурентности.
+        Блокировка строки товара держится ДО КОНЦА текущей транзакции,
+        поэтому весь критический участок
+        «мутация price-relevant состояния → расчёт bounds → запись
+        Product» сериализуется между конкурентными операциями над
+        одним товаром. Вызывается ВНУТРИ transaction.atomic()
+        (все authoritative paths).
+
+        Консистентный порядок захвата (сначала Product, потом
+        вариант/цена) исключает deadlock между этими путями.
+        """
+        return Product.objects.select_for_update().get(pk=product_id)
 
     @staticmethod
     @transaction.atomic
@@ -62,9 +81,18 @@ class PricingService:
 
         АЛГОРИТМ:
           1. Валидация: price > 0, sale_price ≤ price
-          2. get_or_create — найти существующую или создать новую
-          3. Если обновление → создать PriceHistory (old → new)
-          4. Пересчитать Product.min_price / max_price
+          2. LOCK: select_for_update по authoritative Product
+          3. get_or_create — найти существующую или создать новую
+          4. Если обновление → создать PriceHistory (old → new)
+          5. Расчёт bounds (pricing) → CatalogService.set_product_prices
+
+        CONCURRENCY (ARCH-001 Stage 2, correction):
+          @transaction.atomic + блокировка строки Product ПОКРЫВАЕТ
+          ВЕСЬ критический участок: конкурентные set_price / remove_price /
+          set_variant_active / delete_variant над одним товаром
+          сериализуются → последний писатель публикует bounds,
+          рассчитанные по полному закоммиченному множеству цен
+          (lost update невозможен).
 
         get_or_create — атомарная операция:
           try: get(variant=variant)
@@ -83,6 +111,10 @@ class PricingService:
             raise ValidationError({
                 'sale_price': 'Цена со скидкой не может быть больше базовой.',
             })
+
+        # ── LOCK: authoritative Product на весь критический участок ──
+        # (мутация Price → расчёт bounds → запись Product — до COMMIT).
+        product = PricingService._locked_product(variant.product_id)
 
         # ── Создание или обновление ──
         # get_or_create: если цена для варианта уже есть → get (created=False)
@@ -126,7 +158,7 @@ class PricingService:
         #   `pricing` САМ рассчитывает min_price/max_price из своих цен,
         #   а затем передаёт готовые значения в публичный контракт каталога.
         #   `pricing` НЕ мутирует catalog.Product и не читает его напрямую.
-        PricingService.recalculate_product_bounds(variant.product)
+        PricingService.recalculate_product_bounds(product)
 
         return price_obj
 
@@ -168,11 +200,18 @@ class PricingService:
         .filter(variant=variant).delete() — безопасное удаление:
           если цена есть → delete() → deleted=1 → пересчёт
           если цены нет → deleted=0 → noop
+
+        CONCURRENCY (ARCH-001 Stage 2, correction): блокировка
+        authoritative Product ДО удаления цены покрывает весь
+        критический участок (удаление → расчёт → запись Product).
         """
+        # ── LOCK: authoritative Product ──
+        product = PricingService._locked_product(variant.product_id)
+
         deleted, _ = Price.objects.filter(variant=variant).delete()
         if deleted:
             # ARCH-001: `pricing` рассчитывает границы и передаёт их каталогу.
-            PricingService.recalculate_product_bounds(variant.product)
+            PricingService.recalculate_product_bounds(product)
 
     @staticmethod
     @transaction.atomic
@@ -189,7 +228,8 @@ class PricingService:
         Поэтому изменение price-relevant состояния выполняется этим
         явным сервисным вызовом: видимая точка в коде, явная транзакция.
 
-        ПОТОК:
+        ПОТОК (ARCH-001 Stage 2, correction — с локингом):
+            LOCK:    select_for_update по authoritative Product
             мутация: CatalogService.set_variant_active (catalog-owned)
             расчёт:  PricingService._compute_price_bounds (pricing-owned)
             запись:  CatalogService.set_product_prices (единственная точка)
@@ -198,8 +238,11 @@ class PricingService:
         (admin / raw ORM) оставляет Product.min_price/max_price
         устаревшими до следующей операции с ценами.
         """
+        # ── LOCK: authoritative Product на весь критический участок ──
+        product = PricingService._locked_product(variant.product_id)
+
         CatalogService.set_variant_active(variant, is_active=is_active)
-        PricingService.recalculate_product_bounds(variant.product)
+        PricingService.recalculate_product_bounds(product)
 
     @staticmethod
     @transaction.atomic
@@ -212,8 +255,14 @@ class PricingService:
         пересчёт НЕ запускает: товар удаляется целиком, и price-recompute
         wiring не трогает уже удаляемый Product (регрессионный тест
         test_product_cascade_delete_does_not_recompute_prices).
+
+        CONCURRENCY (ARCH-001 Stage 2, correction): блокировка
+        authoritative Product ДО удаления варианта покрывает весь
+        критический участок (удаление → расчёт → запись Product).
         """
-        product = variant.product
+        # ── LOCK: authoritative Product ──
+        product = PricingService._locked_product(variant.product_id)
+
         CatalogService.delete_variant(variant)
         PricingService.recalculate_product_bounds(product)
 
@@ -229,19 +278,25 @@ class PricingService:
             price-relevant состояния варианта (is_active / удаление);
           • напрямую вызывающим кодом (seed-команды).
 
-        Автоматической реакции на ORM-события каталога НЕТ: она требует
-        reverse dependency (catalog → pricing), cross-context Django
-        signal или event registry — всё запрещено (ARCHITECTURE.md →
-        Cross-Domain Coordination).
+        CONCURRENCY (ARCH-001 Stage 2, correction): захватывает
+        блокировку authoritative Product (select_for_update) перед
+        расчётом — весь участок «расчёт → запись» сериализован.
+        Повторный захват внутри транзакции, уже удерживающей блокировку
+        (set_price/remove_price/set_variant_active/delete_variant),
+        безопасен: строка уже заблокирована этой же транзакцией.
+        Благодаря этому даже прямой вызов (seed-команды) не может
+        перезаписать bounds устаревшим расчётом поверх конкурентной
+        операции — он дождётся её COMMIT.
 
         Поток (однонаправленный):
           pricing (расчёт из своих Price, только ACTIVE варианты)
             → CatalogService.set_product_prices() (запись)
             → catalog.Product
         """
-        min_price, max_price = PricingService._compute_price_bounds(product)
+        locked_product = PricingService._locked_product(product.pk)
+        min_price, max_price = PricingService._compute_price_bounds(locked_product)
         CatalogService.set_product_prices(
-            product,
+            locked_product,
             min_price=min_price,
             max_price=max_price,
         )

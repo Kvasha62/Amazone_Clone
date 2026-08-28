@@ -724,6 +724,32 @@ PricingService.set_variant_active(variant, is_active=...)  # mutation via Catalo
 PricingService.delete_variant(variant)                     # mutation via CatalogService + recompute
 ```
 
+**Concurrency.** Every authoritative price-update path —
+`PricingService.set_price()`, `remove_price()`,
+`set_variant_active()`, `delete_variant()`,
+`recalculate_product_bounds()` (also used by seed commands;
+`bulk_set_prices()` delegates to `set_price()`) — runs inside
+`transaction.atomic()` and first acquires a row lock on the
+authoritative `Product` (`SELECT ... FOR UPDATE`, held until COMMIT):
+
+```
+transaction.atomic()
+    ↓ lock Product (select_for_update)
+    ↓ mutate price-relevant state (Price / variant)
+    ↓ calculate authoritative price bounds (pricing-owned)
+    ↓ CatalogService.set_product_prices(...)
+    ↓ commit
+```
+
+The lock covers the **whole** critical section (not just a single
+SELECT), so concurrent operations on one `Product` are serialized and
+the last committed writer always publishes bounds computed from a
+complete, committed view of the `Price` rows — a stale
+`min_price`/`max_price` (lost update) is impossible. Lock ordering is
+consistent (`Product` first, then variant/price rows), which rules out
+deadlocks between these paths. Covered by cross-connection concurrency
+tests (`PriceBoundsConcurrencyTests`).
+
 **Rule.** There is NO automatic cross-context reaction to catalog
 state changes (no reverse dependency, no cross-context Django signal,
 no global listener registry / event bus). Any such mechanism would

@@ -1,13 +1,16 @@
 """
 Тесты PricingService.
 """
+import threading
 from decimal import Decimal
 from unittest import mock
 
-from django.test import TestCase
+from django.db import transaction
+from django.test import TestCase, TransactionTestCase
 from rest_framework.exceptions import ValidationError
 
-from apps.catalog.models import ProductVariant
+from apps.catalog.constants import ProductStatus
+from apps.catalog.models import Brand, Category, Product, ProductVariant
 from apps.catalog.services.catalog_service import CatalogService
 from apps.pricing.models import Price, PriceHistory
 from apps.pricing.services.pricing_service import PricingService
@@ -452,3 +455,170 @@ class VariantStateCoordinationTests(PricingTestCase):
             self.variant_a.is_active = False
             self.variant_a.save()
         set_prices.assert_not_called()
+
+
+class PriceBoundsConcurrencyTests(TransactionTestCase):
+    """
+    ARCH-001 Stage 2 (correction): конкурентная стратегия
+    authoritative price-update paths.
+
+    РЕАЛЬНЫЕ cross-connection тесты (TransactionTestCase на PostgreSQL):
+    данные закоммичены, каждый поток работает на СВОЁМ соединении —
+    блокировка authoritative Product (select_for_update) проверяется
+    по-настоящему, а не последовательными вызовами.
+
+    Гарантия: конкурентные операции над одним Product не оставляют
+    Product.min_price/max_price устаревшими (lost update невозможен),
+    финальные min/max всегда соответствуют полному закоммиченному
+    множеству активных цен.
+    """
+
+    def setUp(self):
+        self.brand = Brand.objects.create(name='ConcurrencyBrand')
+        self.category = Category.add_root(name='ConcurrencyCat')
+        self.product = Product.objects.create(
+            name='Concurrency Product',
+            brand=self.brand,
+            primary_category=self.category,
+            status=ProductStatus.ACTIVE,
+        )
+        self.variant_a = ProductVariant.objects.create(
+            product=self.product, sku='CONC-A', is_active=True,
+        )
+        self.variant_b = ProductVariant.objects.create(
+            product=self.product, sku='CONC-B', is_active=True,
+        )
+
+    def _run_concurrently(self, targets, join_timeout=15):
+        """
+        Запускает функции в потоках одновременно (барьер старта).
+        Каждый поток получает собственное DB-соединение.
+        """
+        errors = []
+        barrier = threading.Barrier(len(targets))
+
+        def runner(fn):
+            try:
+                barrier.wait(timeout=10)
+                fn()
+            except Exception as exc:  # noqa: BLE001 — собираем для assertions
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=runner, args=(fn,), daemon=True)
+            for fn in targets
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=join_timeout)
+
+        self.assertEqual(errors, [], 'Ошибки в конкурентных потоках')
+        for thread in threads:
+            self.assertFalse(
+                thread.is_alive(),
+                'Поток не завершился — deadlock или потеря блокировки',
+            )
+
+    def test_service_blocks_while_product_lock_held(self):
+        """
+        Локинг покрывает ВЕСЬ критический участок: пока внешняя
+        транзакция держит select_for_update на Product, set_price()
+        конкурента БЛОКИРОВАН (не выполняет ни мутацию Price, ни запись
+        bounds). После COMMIT внешний поток завершается, финальные
+        bounds включают обе цены.
+        """
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+
+        done = threading.Event()
+        worker_errors = []
+
+        def worker():
+            try:
+                PricingService.set_price(self.variant_b, Decimal('200.00'))
+            except Exception as exc:  # noqa: BLE001
+                worker_errors.append(exc)
+            finally:
+                done.set()
+
+        worker_thread = threading.Thread(target=worker, daemon=True)
+
+        with transaction.atomic():
+            # Внешняя транзакция захватывает блокировку authoritative Product.
+            Product.objects.select_for_update().get(pk=self.product.pk)
+            worker_thread.start()
+            # Воркер НЕ должен успеть завершиться, пока lock удерживается.
+            finished_while_locked = done.wait(timeout=1.5)
+
+        self.assertFalse(
+            finished_while_locked,
+            'set_price НЕ заблокировался на Product row lock — '
+            'критический участок не защищён (локинг не работает)',
+        )
+        self.assertEqual(worker_errors, [])
+
+        # Lock отпущен (COMMIT) — воркер завершается.
+        worker_thread.join(timeout=10)
+        self.assertFalse(worker_thread.is_alive())
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('200.00'))
+
+    def test_concurrent_set_price_no_stale_bounds(self):
+        """
+        Два конкурентных set_price на разных вариантах одного товара:
+        финальные min/max включают ОБЕ цены (нет lost update).
+        """
+        self._run_concurrently([
+            lambda: PricingService.set_price(self.variant_a, Decimal('100.00')),
+            lambda: PricingService.set_price(self.variant_b, Decimal('200.00')),
+        ])
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('200.00'))
+
+    def test_concurrent_variant_deactivation_and_price_change(self):
+        """
+        Конкурентные set_variant_active (True→False, вариант B) и
+        set_price (вариант A: 100→150). Операции коммутативны:
+        при ЛЮБОЙ сериализации финальное множество активных цен —
+        {A: 150} → min = max = 150. Stale-состояние невозможно.
+        """
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        PricingService.set_price(self.variant_b, Decimal('200.00'))
+
+        self._run_concurrently([
+            lambda: PricingService.set_variant_active(
+                self.variant_b, is_active=False,
+            ),
+            lambda: PricingService.set_price(self.variant_a, Decimal('150.00')),
+        ])
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('150.00'))
+        self.assertEqual(self.product.max_price, Decimal('150.00'))
+        self.assertFalse(
+            ProductVariant.objects.get(pk=self.variant_b.pk).is_active,
+        )
+
+    def test_concurrent_remove_price_and_set_price(self):
+        """
+        Конкурентные remove_price (вариант A) и set_price (вариант B,
+        200→50). Коммутативны: финальное множество активных цен —
+        {B: 50} → min = max = 50 при любом порядке.
+        """
+        PricingService.set_price(self.variant_a, Decimal('100.00'))
+        PricingService.set_price(self.variant_b, Decimal('200.00'))
+
+        self._run_concurrently([
+            lambda: PricingService.remove_price(self.variant_a),
+            lambda: PricingService.set_price(self.variant_b, Decimal('50.00')),
+        ])
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('50.00'))
+        self.assertEqual(self.product.max_price, Decimal('50.00'))
+        self.assertFalse(
+            Price.objects.filter(variant=self.variant_a).exists(),
+        )
