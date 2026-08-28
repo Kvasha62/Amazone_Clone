@@ -458,29 +458,46 @@ class CatalogService:
         product.increment_views()
 
     @staticmethod
-    def recalculate_product_prices(product: Product) -> None:
+    def set_product_prices(
+        product: Product,
+        *,
+        min_price: Decimal | None,
+        max_price: Decimal | None,
+    ) -> Product:
         """
-        Пересчитывает денормализованные min_price / max_price на Product.
+        Обновляет денормализованные min_price / max_price на Product.
 
-        Это ЕДИНСТВЕННЫЙ авторитетный путь обновления денормализованных
-        цен товара. Он принадлежит bounded context `catalog` — никто извне
-        (например, `pricing`) не вправе напрямую мутировать `Product`.
+        Это ЕДИНСТВЕННАЯ точка mutation цен товара в bounded context
+        `catalog`. Она принимает УЖЕ РАССЧИТАННЫЕ значения и только
+        записывает их в catalog.Product.
 
-        Правила ARCH-001 (Pricing → Catalog ownership):
-          • `catalog` владеет `Product.min_price/max_price`.
-          • Другие контексты (pricing) вызывают этот публичный контракт
-            через сервис, а не через `Product.save()`.
+        ARCH-001 (Pricing → Catalog ownership):
+          • Расчёт min_price/max_price — ответственность `pricing`
+            (PricingService собирает цены активных вариантов и передаёт
+            результат сюда).
+          • `catalog` НЕ читает и НЕ ищет цены из `pricing` — никакой
+            обратной зависимости catalog → pricing нет.
+          • `pricing` не имеет права мутировать `catalog.Product`
+            напрямую, поэтому вызывает этот публичный контракт.
 
         АЛГОРИТМ:
-          1. Агрегировать цены активных вариантов товара.
-          2. min_price = MIN(price), max_price = MAX(price).
-          3. Обновить поля Product и сохранить (только эти поля).
-
-        Делегируем модели `Product.recalculate_prices()` — единая
-        реализация пересчёта, которую используют и локальные сигналы
-        каталога (изменение варианта), и внешний контракт.
+          1. product.min_price = переданное значение (None = цен нет).
+          2. product.max_price = переданное значение.
+          3. Сохранить ТОЛЬКО эти поля (не трогаем name/rating/...).
         """
-        product.recalculate_prices()
+        product.min_price = min_price
+        product.max_price = max_price
+        product.save(update_fields=['min_price', 'max_price', 'updated_at'])
+
+        logger.debug(
+            'product_prices_updated',
+            extra={
+                'product_id': product.pk,
+                'min_price': str(product.min_price),
+                'max_price': str(product.max_price),
+            },
+        )
+        return product
 
     # ----------------------------------------------------------
     # Категории

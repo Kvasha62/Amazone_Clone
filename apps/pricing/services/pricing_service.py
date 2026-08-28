@@ -11,8 +11,11 @@
 #
 # ARCH-001 (Pricing → Catalog ownership):
 #   PricingService НЕ мутирует catalog.Product напрямую.
-#   Обновление денормализованных Product.min_price/max_price
-#   делегировано каталогу через CatalogService.recalculate_product_prices().
+#   `pricing` рассчитывает min_price/max_price из своих цен (Price)
+#   и передаёт готовые значения в публичный контракт каталога
+#   CatalogService.set_product_prices(product, min_price=..., max_price=...).
+#   Проверьте: dependency graph — pricing → CatalogService → catalog.Product,
+#   без обратной зависимости catalog → pricing.
 #
 # 📖 https://docs.djangoproject.com/en/stable/topics/db/transactions/
 # 📖 https://docs.djangoproject.com/en/stable/ref/models/expressions/#f-expressions
@@ -114,9 +117,16 @@ class PricingService:
             )
 
         # ── Пересчёт денормализованных цен на товаре ──
-        # ARCH-001: `pricing` НЕ мутирует catalog.Product напрямую.
-        # Обновление min_price/max_price делегировано каталогу.
-        CatalogService.recalculate_product_prices(variant.product)
+        # ARCH-001 (Pricing → Catalog ownership):
+        #   `pricing` САМ рассчитывает min_price/max_price из своих цен,
+        #   а затем передаёт готовые значения в публичный контракт каталога.
+        #   `pricing` НЕ мутирует catalog.Product и не читает его напрямую.
+        min_price, max_price = PricingService._compute_price_bounds(variant.product)
+        CatalogService.set_product_prices(
+            variant.product,
+            min_price=min_price,
+            max_price=max_price,
+        )
 
         return price_obj
 
@@ -161,8 +171,52 @@ class PricingService:
         """
         deleted, _ = Price.objects.filter(variant=variant).delete()
         if deleted:
-            # ARCH-001: делегируем пересчёт цен каталогу.
-            CatalogService.recalculate_product_prices(variant.product)
+            # ARCH-001: `pricing` рассчитывает границы и передаёт их каталогу.
+            min_price, max_price = PricingService._compute_price_bounds(variant.product)
+            CatalogService.set_product_prices(
+                variant.product,
+                min_price=min_price,
+                max_price=max_price,
+            )
+
+    @staticmethod
+    def _compute_price_bounds(product) -> tuple[Decimal | None, Decimal | None]:
+        """
+        Рассчитывает min_price / max_price для товара из его цен.
+
+        Данные о ценах принадлежат bounded context `pricing`, поэтому
+        расчёт выполняется здесь и передаётся в каталог готовым.
+
+        АЛГОРИТМ:
+          1. Берём цены активных вариантов товара (variant.is_active=True).
+          2. min_price = MIN(price), max_price = MAX(price).
+          3. Если цены нет → (None, None).
+
+        ВАЖНО: только активные варианты участвуют в расчёте — неактивный
+        вариант не виден в каталоге и не должен занижать/завышать цену.
+        """
+        prices = (
+            Price.objects
+            .filter(variant__product=product, variant__is_active=True)
+            .values_list('price', flat=True)
+        )
+
+        if prices:
+            min_price = min(prices)
+            max_price = max(prices)
+        else:
+            min_price = None
+            max_price = None
+
+        logger.debug(
+            'product_price_bounds_computed',
+            extra={
+                'product_id': product.pk,
+                'min_price': str(min_price),
+                'max_price': str(max_price),
+            },
+        )
+        return min_price, max_price
 
     @staticmethod
     def get_price_history(variant, limit: int = 50):

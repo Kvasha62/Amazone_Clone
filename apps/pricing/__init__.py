@@ -6,9 +6,12 @@
 #   • Историю изменений цен (PriceHistory — FK к ProductVariant)
 #
 # ARCH-001 (Pricing → Catalog ownership):
-#   Пересчёт денормализованных Product.min_price / max_price ПЕРЕМЕЩЁН
-#   в bounded context `catalog` (см. apps.catalog.services.CatalogService).
-#   Здесь больше НЕТ cross-domain сигналов на пересчёт цен товара.
+#   Расчёт денормализованных Product.min_price / max_price — ответственность
+#   `pricing`. PricingService рассчитывает границы из своих цен (Price) и
+#   передаёт готовые значения в публичный контракт каталога
+#   CatalogService.set_product_prices(product, min_price=..., max_price=...).
+#   `catalog` НЕ читает цены из pricing → зависимость однонаправленная
+#   (pricing → catalog → catalog.Product). Здесь нет cross-domain сигналов.
 #
 # 📖 https://docs.djangoproject.com/en/stable/ref/applications/
 # ────────────────────────────────────────────────────────────────────────
@@ -20,8 +23,9 @@ class PricingConfig(AppConfig):
     """
     Конфигурация модуля ценообразования.
 
-    Обновление денормализованных цен товара выполняется через
-    CatalogService.recalculate_product_prices() (см. ARCH-001).
+    Расчёт денормализованных цен товара выполняется в `pricing`
+    (PricingService), а запись в `catalog.Product` — через публичный
+    контракт CatalogService.set_product_prices() (см. ARCH-001).
     """
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'apps.pricing'

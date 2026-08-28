@@ -189,58 +189,122 @@ class ProductViewsIncrementTests(CatalogTestCase):
         self.assertEqual(self.product.views_count, 1)
 
 
-class ProductPriceRecalculationTests(CatalogTestCase):
+class ProductPriceUpdatingTests(CatalogTestCase):
     """
-    Тесты CatalogService.recalculate_product_prices().
+    Тесты CatalogService.set_product_prices().
 
-    Это единый авторитетный путь обновления денормализованных
-    Product.min_price / max_price (ARCH-001: Pricing → Catalog ownership).
+    Это ЕДИНСТВЕННАЯ точка mutation денормализованных цен в каталоге.
+    Метод принимает УЖЕ РАССЧИТАННЫЕ min_price/max_price и только
+    записывает их в catalog.Product (ARCH-001: Pricing → Catalog ownership).
     """
 
-    def _priced_variant(self, variant, price):
-        from apps.pricing.models import Price
-        return Price.objects.create(variant=variant, price=Decimal(price))
-
-    def test_recalculate_updates_min_max(self):
-        """min_price / max_price обновляются из цен активных вариантов."""
-        self._priced_variant(self.variant_128, '100.00')
-        self._priced_variant(self.variant_256, '200.00')
-
-        CatalogService.recalculate_product_prices(self.product)
+    def test_set_product_prices_updates_min_max(self):
+        """Готовые min/max записываются на Product."""
+        CatalogService.set_product_prices(
+            self.product,
+            min_price=Decimal('100.00'),
+            max_price=Decimal('200.00'),
+        )
         self.product.refresh_from_db()
         self.assertEqual(self.product.min_price, Decimal('100.00'))
         self.assertEqual(self.product.max_price, Decimal('200.00'))
 
-    def test_recalculate_sets_none_when_no_prices(self):
-        """Нет цен → min_price = max_price = None."""
-        CatalogService.recalculate_product_prices(self.product)
+    def test_set_product_prices_accepts_none(self):
+        """Нет цен → передаются None → поля обнуляются."""
+        CatalogService.set_product_prices(
+            self.product,
+            min_price=None,
+            max_price=None,
+        )
         self.product.refresh_from_db()
         self.assertIsNone(self.product.min_price)
         self.assertIsNone(self.product.max_price)
 
-    def test_recalculate_excludes_inactive_variants(self):
-        """Неактивные варианты не учитываются в min/max."""
-        inactive = self.product.variants.create(
-            sku='SM-S24-INACTIVE',
-            is_active=False,
+    def test_set_product_prices_single_price(self):
+        """Одна цена → min = max."""
+        CatalogService.set_product_prices(
+            self.product,
+            min_price=Decimal('150.00'),
+            max_price=Decimal('150.00'),
         )
-        self._priced_variant(self.variant_128, '100.00')
-        self._priced_variant(inactive, '10.00')
-
-        CatalogService.recalculate_product_prices(self.product)
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.min_price, Decimal('100.00'))
-        self.assertEqual(self.product.max_price, Decimal('100.00'))
-
-    def test_recalculate_uses_lowest_and_highest(self):
-        """min — наименьшая, max — наибольшая из цен всех активных вариантов."""
-        self._priced_variant(self.variant_128, '300.00')
-        self._priced_variant(self.variant_256, '150.00')
-
-        CatalogService.recalculate_product_prices(self.product)
         self.product.refresh_from_db()
         self.assertEqual(self.product.min_price, Decimal('150.00'))
-        self.assertEqual(self.product.max_price, Decimal('300.00'))
+        self.assertEqual(self.product.max_price, Decimal('150.00'))
+
+    def test_set_product_prices_only_mutates_price_fields(self):
+        """Метод не трогает прочие поля товара (name, status...)."""
+        original_name = self.product.name
+        original_status = self.product.status
+        CatalogService.set_product_prices(
+            self.product,
+            min_price=Decimal('50.00'),
+            max_price=Decimal('50.00'),
+        )
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.name, original_name)
+        self.assertEqual(self.product.status, original_status)
+
+
+class CatalogNoPricingDependencyTests(TestCase):
+    """
+    ARCH-001 regression: в каталоге НЕТ обратной зависимости catalog → pricing.
+
+    Контракт обновления цен (CatalogService.set_product_prices) должен
+    принимать готовые значения и НЕ импортировать/не читать цены из
+    bounded context pricing. Тест НЕ использует mock, который скрывает
+    настоящий импорт: он анализирует исходный код контракта и модуля.
+    """
+
+    @staticmethod
+    def _imported_modules(source):
+        """Собирает имена модулей, импортируемых в исходнике."""
+        import ast
+        tree = ast.parse(source)
+        modules = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    modules.append(node.module)
+        return modules
+
+    def test_catalog_service_module_does_not_import_pricing(self):
+        """Модуль apps.catalog.services.catalog_service не импортирует pricing."""
+        import inspect
+        module_file = inspect.getfile(CatalogService)
+        with open(module_file, encoding='utf-8') as fh:
+            source = fh.read()
+        modules = self._imported_modules(source)
+        self.assertNotIn(
+            'apps.pricing',
+            modules,
+            'catalog_service не должен импортировать apps.pricing '
+            '(обратная зависимость catalog → pricing).',
+        )
+        self.assertFalse(
+            any(m.startswith('apps.pricing') for m in modules),
+            'catalog_service не должен импортировать любой модуль pricing.',
+        )
+
+    def test_set_product_prices_does_not_read_prices(self):
+        """
+        CatalogService.set_product_prices() не читает цены из pricing.
+
+        Метод принимает рассчитанные min_price/max_price и записывает их.
+        В нём не должно быть обращения к `price__price` (чтение таблицы цен),
+        к модели Price и к импорту apps.pricing — это и есть обратная
+        зависимость catalog → pricing, которую убирает ARCH-001.
+        """
+        import inspect
+        source = inspect.getsource(CatalogService.set_product_prices)
+        self.assertNotIn('price__price', source)
+        self.assertNotIn('Price', source)
+        self.assertNotIn('apps.pricing', source)
+        # Контракт должен записывать только поля catalog.Product.
+        self.assertIn('product.min_price', source)
+        self.assertIn('product.max_price', source)
+        self.assertIn('product.save', source)
 
 
 class CategoryServiceTests(TestCase):
