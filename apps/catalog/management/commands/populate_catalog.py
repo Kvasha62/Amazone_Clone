@@ -32,6 +32,7 @@ from apps.catalog.models import (
 )
 from apps.catalog.constants import ProductStatus
 from apps.pricing.models import Price
+from apps.pricing.services.pricing_service import PricingService
 from apps.inventory.models import Stock
 from apps.users.models import User
 
@@ -346,8 +347,10 @@ class Command(BaseCommand):
 
                 created_variants += 1
 
-            # Пересчитываем min_price/max_price
-            product.recalculate_prices()
+            # ARCH-001 Stage 2: Product.recalculate_prices() удалён — он
+            # читал pricing.Price из каталога. Пересчёт через контракт
+            # pricing → CatalogService.set_product_prices.
+            PricingService.recalculate_product_bounds(product)
             created_products += 1
 
         self.stdout.write(

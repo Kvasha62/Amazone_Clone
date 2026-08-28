@@ -599,24 +599,14 @@ class Product(BaseModel):
         self.reviews_count = total_reviews
         self.save(update_fields=['rating', 'reviews_count', 'updated_at'])
 
-    def recalculate_prices(self) -> None:
-        """
-        Пересчитывает min_price / max_price из вариантов.
-        Lazy-импорт — избегает циклов.
-        """
-        from apps.catalog.models import ProductVariant
-
-        prices = (
-            ProductVariant.objects
-            .filter(product=self, is_active=True)
-            .values_list('price__price', flat=True)
-        )
-        active_prices = [p for p in prices if p is not None]
-
-        if not active_prices:
-            self.min_price = None
-            self.max_price = None
-        else:
-            self.min_price = min(active_prices)
-            self.max_price = max(active_prices)
-        self.save(update_fields=['min_price', 'max_price', 'updated_at'])
+    # ARCH-001 Stage 2: Product.recalculate_prices() удалён — он читал
+    # цены pricing через ORM-lookup по вариантам (JOIN на таблицу цен
+    # pricing — запрещённая обратная зависимость catalog → pricing).
+    #
+    # Пересчёт min_price/max_price теперь:
+    #   1) рассчитывает pricing — PricingService.recalculate_product_bounds()
+    #      (из СВОИХ данных Price, только активные варианты);
+    #   2) записывает catalog — CatalogService.set_product_prices();
+    #   3) запускается через контракт каталога
+    #      notify_price_relevant_state_changed() при price-relevant
+    #      изменении вариантов (см. apps/catalog/signals.py).

@@ -2,6 +2,8 @@
 Тесты CatalogService — бизнес-логика каталога.
 """
 from decimal import Decimal
+from pathlib import Path
+from unittest import mock
 
 from django.test import TestCase
 from rest_framework.exceptions import NotFound, ValidationError
@@ -13,7 +15,11 @@ from apps.catalog.models import (
     Product,
     Tag,
 )
-from apps.catalog.services.catalog_service import CatalogService
+from apps.catalog.services.catalog_service import (
+    CatalogService,
+    notify_price_relevant_state_changed,
+    register_price_bounds_listener,
+)
 from apps.catalog.tests.factories import CatalogTestCase
 
 
@@ -305,6 +311,135 @@ class CatalogNoPricingDependencyTests(TestCase):
         self.assertIn('product.min_price', source)
         self.assertIn('product.max_price', source)
         self.assertIn('product.save', source)
+
+    # ── ARCH-001 Stage 2: всё production-дерево каталога ──
+
+    # Production-код каталога. management/commands (populate_*) — dev-тулинг:
+    # он легитимно создаёт pricing-фикстуры при сеянии и исключён
+    # из проверки (как и tests/).
+    PRODUCTION_SUBPATHS = (
+        'apps/catalog/apps.py',
+        'apps/catalog/constants.py',
+        'apps/catalog/urls.py',
+        'apps/catalog/signals.py',
+        'apps/catalog/admin',
+        'apps/catalog/api_views',
+        'apps/catalog/managers',
+        'apps/catalog/models',
+        'apps/catalog/querysets',
+        'apps/catalog/serializers',
+        'apps/catalog/services',
+    )
+
+    def _production_sources(self):
+        """Исходники production-кода каталога: (path, source)."""
+        repo_root = Path(__file__).resolve().parents[3]
+        for sub in self.PRODUCTION_SUBPATHS:
+            path = repo_root / sub
+            if path.is_file():
+                yield path, path.read_text(encoding='utf-8')
+            elif path.is_dir():
+                for py_file in sorted(path.rglob('*.py')):
+                    yield py_file, py_file.read_text(encoding='utf-8')
+
+    def test_production_catalog_does_not_import_pricing(self):
+        """
+        Ни один production-модуль catalog не импортирует apps.pricing.
+
+        ARCH-001 Stage 2: единственное направление зависимости —
+        pricing → catalog. Каталог общается с pricing только через
+        контракт слушателей (динамический колбэк, без импорта).
+        """
+        for path, source in self._production_sources():
+            modules = self._imported_modules(source)
+            bad = [
+                m for m in modules
+                if m == 'apps.pricing' or m.startswith('apps.pricing.')
+            ]
+            self.assertEqual(
+                bad, [],
+                f'{path} импортирует pricing — запрещённая обратная '
+                f'зависимость catalog → pricing: {bad}',
+            )
+
+    def test_production_catalog_has_no_price_price_lookup(self):
+        """
+        Нигде в production-каталоге нет ORM-lookup `price__price`
+        (чтение таблицы цен pricing через JOIN из каталога).
+        """
+        for path, source in self._production_sources():
+            self.assertNotIn(
+                'price__price', source,
+                f'{path} читает цены через price__price — обратная '
+                f'зависимость catalog → pricing',
+            )
+
+    def test_product_model_has_no_recalculate_prices(self):
+        """
+        Product.recalculate_prices() удалён (ARCH-001 Stage 2):
+        модель каталога больше не умеет читать цены pricing.
+        """
+        self.assertFalse(
+            hasattr(Product, 'recalculate_prices'),
+            'Product.recalculate_prices должен быть удалён — '
+            'расчёт границ теперь в pricing, запись в CatalogService.',
+        )
+
+
+class PriceBoundsListenerContractTests(CatalogTestCase):
+    """
+    ARCH-001 Stage 2: контракт price-relevant событий каталога.
+
+    catalog уведомляет зарегистрированных слушателей без Django-сигналов
+    и без импорта pricing. Слушателя регистрирует pricing в ready()
+    (проверка wiring — в apps/pricing/tests).
+    """
+
+    def test_notify_calls_registered_listener_with_product(self):
+        """notify() синхронно вызывает слушателя с товаром-аргументом."""
+        from apps.catalog.services import catalog_service
+        listener = mock.Mock()
+        with mock.patch.object(
+            catalog_service, '_price_bounds_listeners', [],
+        ) as registry:
+            registry.append(listener)
+            notify_price_relevant_state_changed(self.product)
+        listener.assert_called_once_with(self.product)
+
+    def test_notify_calls_each_listener_once(self):
+        """Несколько слушателей вызываются все, по одному разу."""
+        from apps.catalog.services import catalog_service
+        first, second = mock.Mock(), mock.Mock()
+        with mock.patch.object(
+            catalog_service, '_price_bounds_listeners', [],
+        ) as registry:
+            registry.append(first)
+            registry.append(second)
+            notify_price_relevant_state_changed(self.product)
+        first.assert_called_once_with(self.product)
+        second.assert_called_once_with(self.product)
+
+    def test_notify_without_listeners_is_noop(self):
+        """Нет слушателей → безопасный no-op (без исключений)."""
+        from apps.catalog.services import catalog_service
+        with mock.patch.object(
+            catalog_service, '_price_bounds_listeners', [],
+        ):
+            notify_price_relevant_state_changed(self.product)
+
+    def test_register_ignores_duplicate_listener(self):
+        """Повторная регистрация того же слушателя не дублирует его."""
+        from apps.catalog.services import catalog_service
+
+        def fake_listener(product):
+            pass
+
+        with mock.patch.object(
+            catalog_service, '_price_bounds_listeners', [],
+        ) as registry:
+            register_price_bounds_listener(fake_listener)
+            register_price_bounds_listener(fake_listener)
+            self.assertEqual(list(registry), [fake_listener])
 
 
 class CategoryServiceTests(TestCase):

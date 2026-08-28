@@ -281,3 +281,85 @@ class PricingCatalogOwnershipTests(PricingTestCase):
         self.product.refresh_from_db()
         self.assertIsNone(self.product.min_price)
         self.assertIsNone(self.product.max_price)
+
+
+class RecalculateProductBoundsTests(PricingTestCase):
+    """
+    ARCH-001 Stage 2: публичный контракт
+    PricingService.recalculate_product_bounds().
+
+    Единственный владелец расчёта price bounds — pricing. Контракт
+    вызывается из catalog (price-relevant события вариантов) через
+    register_price_bounds_listener — без Django-сигналов между
+    контекстами и без импорта pricing из catalog.
+    """
+
+    def _raw_price(self, variant, price):
+        """Создаёт Price напрямую через ORM (в обход set_price)."""
+        return Price.objects.create(variant=variant, price=price)
+
+    def test_sets_bounds_from_active_variants(self):
+        """min/max считаются из цен активных вариантов."""
+        self._raw_price(self.variant_a, Decimal('100.00'))
+        self._raw_price(self.variant_b, Decimal('300.00'))
+        PricingService.recalculate_product_bounds(self.product)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('300.00'))
+
+    def test_excludes_inactive_variants(self):
+        """Неактивные варианты не участвуют в расчёте границ."""
+        self._raw_price(self.variant_a, Decimal('100.00'))
+        self._raw_price(self.variant_inactive, Decimal('10.00'))
+        PricingService.recalculate_product_bounds(self.product)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('100.00'))
+
+    def test_no_prices_sets_none(self):
+        """Нет цен → min_price = max_price = None."""
+        PricingService.recalculate_product_bounds(self.product)
+        self.product.refresh_from_db()
+        self.assertIsNone(self.product.min_price)
+        self.assertIsNone(self.product.max_price)
+
+    def test_writes_through_catalog_contract(self):
+        """Запись идёт через CatalogService.set_product_prices (ровно 1)."""
+        self._raw_price(self.variant_a, Decimal('150.00'))
+        with mock.patch.object(
+            CatalogService, 'set_product_prices', return_value=self.product,
+        ) as set_prices:
+            PricingService.recalculate_product_bounds(self.product)
+        set_prices.assert_called_once_with(
+            self.product,
+            min_price=Decimal('150.00'),
+            max_price=Decimal('150.00'),
+        )
+
+    def test_pricing_registered_as_price_bounds_listener(self):
+        """
+        Wiring ARCH-001 Stage 2: pricing подписан на price-relevant
+        события каталога (регистрация в PricingConfig.ready()).
+        """
+        from apps.catalog.services import catalog_service
+        self.assertIn(
+            PricingService.recalculate_product_bounds,
+            catalog_service._price_bounds_listeners,
+        )
+
+    def test_catalog_notification_reaches_pricing_recalc(self):
+        """
+        Интеграционный путь контракта: notify_price_relevant_state_changed()
+        из catalog доходит до пересчёта в pricing и обновляет Product
+        (без Django-сигналов между контекстами).
+        """
+        from apps.catalog.services.catalog_service import (
+            notify_price_relevant_state_changed,
+        )
+        self._raw_price(self.variant_a, Decimal('100.00'))
+        self._raw_price(self.variant_b, Decimal('300.00'))
+        # Состояние варианта изменилось (в тестах имитируем напрямую).
+        notify_price_relevant_state_changed(self.product)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.min_price, Decimal('100.00'))
+        self.assertEqual(self.product.max_price, Decimal('300.00'))

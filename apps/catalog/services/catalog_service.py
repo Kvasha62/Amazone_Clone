@@ -41,6 +41,9 @@ import logging
 #   Для цен точность критична — 0.01₽ ошибки накопятся в миллионы.
 from decimal import Decimal
 
+# Callable — тип для аннотации колбэков (контракт price-relevant событий).
+from collections.abc import Callable
+
 # transaction.atomic — декоратор / контекстный менеджер для
 # оборачивания кода в SQL-транзакцию:
 #   BEGIN; ... код ...; COMMIT;  (или ROLLBACK при исключении).
@@ -78,6 +81,72 @@ from apps.catalog.models import (
 # __name__ = 'apps.catalog.services.catalog_service'
 # Без: print() в проде никто не увидит (нет уровня/формата).
 logger = logging.getLogger(__name__)
+
+
+# ────────────────────────────────────────────────────────────
+# ARCH-001 Stage 2: контракт price-relevant событий каталога.
+#
+# ПРОБЛЕМА:
+#   Product.min_price/max_price зависят и от состояния вариантов
+#   каталога (is_active, удаление варианта), и от цен pricing.
+#   Раньше каталог сам пересчитывал границы, читая цены pricing
+#   через ORM-lookup `variant.price` (JOIN на таблицу цен pricing) —
+#   это запрещённая обратная зависимость catalog → pricing.
+#
+# РЕШЕНИЕ (инверсия зависимости, БЕЗ Django-сигналов):
+#   catalog объявляет расширяемую точку — список слушателей
+#   price-relevant событий. Bounded context `pricing` при старте
+#   (PricingConfig.ready()) сам регистрирует свой колбэк
+#   PricingService.recalculate_product_bounds.
+#
+#   Направление статических импортов строго однонаправленное:
+#       pricing → catalog
+#   catalog не знает, кто слушатель (никакого импорта pricing),
+#   событие обрабатывается синхронно — в том же потоке и транзакции,
+#   что и изменение состояния варианта.
+# ────────────────────────────────────────────────────────────
+
+# Тип слушателя: callable(product) -> None.
+# Слушатель САМ рассчитывает границы из своих данных (свои модели)
+# и передаёт готовые значения в CatalogService.set_product_prices().
+PriceBoundsListener = Callable[[Product], None]
+
+# Реестр слушателей. Наполняется в AppConfig.ready() владельцев
+# других контекстов (сейчас — только apps.pricing).
+_price_bounds_listeners: list[PriceBoundsListener] = []
+
+
+def register_price_bounds_listener(listener: PriceBoundsListener) -> None:
+    """
+    Регистрирует слушателя price-relevant событий каталога.
+
+    Вызывается владельцем чужого контекста (сейчас — pricing) в своём
+    AppConfig.ready(). Это НЕ Django signal: обычный вызов колбэка
+    без глобальной dispatch-магии и без cross-context импортов.
+    Повторная регистрация того же слушателя игнорируется.
+    """
+    if listener not in _price_bounds_listeners:
+        _price_bounds_listeners.append(listener)
+        logger.debug(
+            'price_bounds_listener_registered',
+            extra={'listener': getattr(listener, '__qualname__', str(listener))},
+        )
+
+
+def notify_price_relevant_state_changed(product: Product) -> None:
+    """
+    Точка входа каталога: «изменилось состояние товара, влияющее на цены».
+
+    Вызывается из catalog-локальных сигналов (изменение is_active
+    варианта, удаление варианта). Слушатель (pricing) синхронно
+    пересчитывает min/max из своих данных и записывает их через
+    CatalogService.set_product_prices() — единственную точку mutation.
+
+    Если слушателей нет — безопасный no-op: границы обновятся при
+    следующей операции с ценами.
+    """
+    for listener in _price_bounds_listeners:
+        listener(product)
 
 
 class CatalogService:

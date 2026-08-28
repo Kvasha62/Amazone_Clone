@@ -2,12 +2,15 @@
 # apps/pricing/services/pricing_service.py — бизнес-логика ценообразования.
 #
 # МЕТОДЫ:
-#   set_price()               — установить/обновить цену варианта
-#   get_price()               — получить объект цены
-#   get_effective_price()     — получить эффективную цену (Decimal)
-#   remove_price()            — удалить цену варианта
-#   get_price_history()       — история изменений
-#   bulk_set_prices()         — массовое обновление
+#   set_price()                    — установить/обновить цену варианта
+#   get_price()                    — получить объект цены
+#   get_effective_price()          — получить эффективную цену (Decimal)
+#   remove_price()                 — удалить цену варианта
+#   get_price_history()            — история изменений
+#   bulk_set_prices()              — массовое обновление
+#   recalculate_product_bounds()   — публичный пересчёт min/max товара
+#                                    (ARCH-001 Stage 2: контракт для
+#                                    price-relevant событий каталога)
 #
 # ARCH-001 (Pricing → Catalog ownership):
 #   PricingService НЕ мутирует catalog.Product напрямую.
@@ -121,12 +124,7 @@ class PricingService:
         #   `pricing` САМ рассчитывает min_price/max_price из своих цен,
         #   а затем передаёт готовые значения в публичный контракт каталога.
         #   `pricing` НЕ мутирует catalog.Product и не читает его напрямую.
-        min_price, max_price = PricingService._compute_price_bounds(variant.product)
-        CatalogService.set_product_prices(
-            variant.product,
-            min_price=min_price,
-            max_price=max_price,
-        )
+        PricingService.recalculate_product_bounds(variant.product)
 
         return price_obj
 
@@ -172,12 +170,34 @@ class PricingService:
         deleted, _ = Price.objects.filter(variant=variant).delete()
         if deleted:
             # ARCH-001: `pricing` рассчитывает границы и передаёт их каталогу.
-            min_price, max_price = PricingService._compute_price_bounds(variant.product)
-            CatalogService.set_product_prices(
-                variant.product,
-                min_price=min_price,
-                max_price=max_price,
-            )
+            PricingService.recalculate_product_bounds(variant.product)
+
+    @staticmethod
+    def recalculate_product_bounds(product) -> None:
+        """
+        Публичный контракт: пересчитать min_price / max_price товара.
+
+        ARCH-001 Stage 2 — единственный владелец расчёта price bounds.
+        Вызывается:
+          • из set_price() / remove_price() — после изменения цены;
+          • из контракта каталога notify_price_relevant_state_changed() —
+            когда изменилось price-relevant состояние вариантов
+            (is_active, удаление варианта). Регистрацию выполняет
+            PricingConfig.ready() через
+            register_price_bounds_listener() — БЕЗ Django-сигналов
+            между контекстами и без импорта pricing из catalog.
+
+        Поток (однонаправленный):
+          pricing (расчёт из своих Price, только ACTIVE варианты)
+            → CatalogService.set_product_prices() (запись)
+            → catalog.Product
+        """
+        min_price, max_price = PricingService._compute_price_bounds(product)
+        CatalogService.set_product_prices(
+            product,
+            min_price=min_price,
+            max_price=max_price,
+        )
 
     @staticmethod
     def _compute_price_bounds(product) -> tuple[Decimal | None, Decimal | None]:
