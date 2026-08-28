@@ -1,13 +1,15 @@
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+from threading import Barrier
 
-from django.db import connection, connections
-from django.test import TransactionTestCase, skipUnlessDBFeature
 from django.contrib.auth import get_user_model
+from django.db import connections
+from django.test import TransactionTestCase, skipUnlessDBFeature
 from rest_framework.exceptions import ValidationError
 
-from apps.discounts.models import Coupon, CouponUsage
+from apps.discounts.models import CouponUsage
 from apps.discounts.tests.factories import create_test_coupon
+from apps.orders.models import Order
 from apps.orders.services.order_service import OrderService
 from apps.orders.tests.factories import create_test_order, create_test_user
 
@@ -23,7 +25,7 @@ class CouponConcurrencyTests(TransactionTestCase):
         try:
             barrier.wait(timeout=10)
             user = User.objects.get(pk=user_id)
-            order = __import__('apps.orders.models', fromlist=['Order']).Order.objects.get(pk=order_id)
+            order = Order.objects.get(pk=order_id)
             try:
                 OrderService.apply_coupon(order, code, user=user)
                 return 'ok'
@@ -33,8 +35,6 @@ class CouponConcurrencyTests(TransactionTestCase):
             connections.close_all()
 
     def _run_two(self, orders, users, code):
-        from threading import Barrier
-
         barrier = Barrier(2)
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = [
@@ -76,10 +76,7 @@ class CouponConcurrencyTests(TransactionTestCase):
         self.assertEqual(sorted(results), ['error', 'ok'])
         coupon.refresh_from_db()
         self.assertEqual(coupon.times_used, 1)
-        self.assertEqual(
-            CouponUsage.objects.filter(coupon=coupon, user=user).count(),
-            1,
-        )
+        self.assertEqual(CouponUsage.objects.filter(coupon=coupon, user=user).count(), 1)
 
     def test_concurrent_apply_to_same_order_is_serialized_by_order_lock(self):
         coupon = create_test_coupon(
