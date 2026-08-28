@@ -12,41 +12,99 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterField(
-            model_name='product',
-            name='search_vector',
-            field=django.contrib.postgres.search.SearchVectorField(blank=True, editable=False, help_text='\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438 \u043e\u0431\u043d\u043e\u0432\u043b\u044f\u0435\u0442\u0441\u044f \u0447\u0435\u0440\u0435\u0437 trigger / celery. \u041d\u0435 \u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0432\u0440\u0443\u0447\u043d\u0443\u044e.', null=True, verbose_name='\u041f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0439 \u0432\u0435\u043a\u0442\u043e\u0440'),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunSQL(
+                    sql="""
+                        ALTER TABLE catalog_product
+                        ALTER COLUMN search_vector TYPE tsvector
+                        USING to_tsvector(
+                            'russian',
+                            COALESCE(name, '') || ' ' || COALESCE(description, '')
+                        );
+                    """,
+                    reverse_sql="""
+                        ALTER TABLE catalog_product
+                        ALTER COLUMN search_vector TYPE text
+                        USING search_vector::text;
+                    """,
+                ),
+            ],
+            state_operations=[
+                migrations.AlterField(
+                    model_name='product',
+                    name='search_vector',
+                    field=django.contrib.postgres.search.SearchVectorField(
+                        blank=True,
+                        editable=False,
+                        help_text='Автоматически обновляется через trigger / celery. Не редактировать вручную.',
+                        null=True,
+                        verbose_name='Поисковый вектор',
+                    ),
+                ),
+            ],
         ),
         migrations.AddIndex(
             model_name='product',
-            index=models.Index(condition=models.Q(('status', 'active')), fields=['status', 'primary_category'], name='product_active_category_idx'),
+            index=models.Index(
+                condition=models.Q(status='active'),
+                fields=['status', 'primary_category'],
+                name='product_active_category_idx',
+            ),
         ),
         migrations.AddIndex(
             model_name='product',
-            index=models.Index(condition=models.Q(('status', 'active')), fields=['status', 'brand'], name='product_active_brand_idx'),
+            index=models.Index(
+                condition=models.Q(status='active'),
+                fields=['status', 'brand'],
+                name='product_active_brand_idx',
+            ),
         ),
         migrations.AddIndex(
             model_name='product',
-            index=models.Index(condition=models.Q(('status', 'active')), fields=['-rating'], name='product_top_rating_idx'),
+            index=models.Index(
+                condition=models.Q(status='active'),
+                fields=['-rating'],
+                name='product_top_rating_idx',
+            ),
         ),
         migrations.AddIndex(
             model_name='product',
-            index=models.Index(condition=models.Q(('status', 'active')), fields=['min_price'], name='product_price_asc_idx'),
+            index=models.Index(
+                condition=models.Q(status='active'),
+                fields=['min_price'],
+                name='product_price_asc_idx',
+            ),
         ),
         migrations.AddIndex(
             model_name='product',
-            index=models.Index(condition=models.Q(('status', 'active')), fields=['-max_price'], name='product_price_desc_idx'),
+            index=models.Index(
+                condition=models.Q(status='active'),
+                fields=['-max_price'],
+                name='product_price_desc_idx',
+            ),
         ),
         migrations.AddIndex(
             model_name='product',
-            index=models.Index(condition=models.Q(('status', 'active')), fields=['-created_at'], name='product_newest_idx'),
+            index=models.Index(
+                condition=models.Q(status='active'),
+                fields=['-created_at'],
+                name='product_newest_idx',
+            ),
         ),
         migrations.AddIndex(
             model_name='product',
-            index=models.Index(condition=models.Q(('is_featured', True), ('status', 'active')), fields=['-created_at'], name='product_featured_partial_idx'),
+            index=models.Index(
+                condition=models.Q(is_featured=True, status='active'),
+                fields=['-created_at'],
+                name='product_featured_partial_idx',
+            ),
         ),
         migrations.AddIndex(
             model_name='product',
-            index=django.contrib.postgres.indexes.GinIndex(fields=['search_vector'], name='product_search_gin'),
+            index=django.contrib.postgres.indexes.GinIndex(
+                fields=['search_vector'],
+                name='product_search_gin',
+            ),
         ),
     ]
