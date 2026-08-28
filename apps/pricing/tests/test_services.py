@@ -5,7 +5,7 @@ import threading
 from decimal import Decimal
 from unittest import mock
 
-from django.db import transaction
+from django.db import connections, transaction
 from django.test import TestCase, TransactionTestCase
 from rest_framework.exceptions import ValidationError
 
@@ -493,6 +493,12 @@ class PriceBoundsConcurrencyTests(TransactionTestCase):
         """
         Запускает функции в потоках одновременно (барьер старта).
         Каждый поток получает собственное DB-соединение.
+
+        ВАЖНО: каждый поток ЗАКРЫВАЕТ свои DB-соединения в finally.
+        Без этого соединения живут до GC: они держат сессии в PostgreSQL,
+        и teardown сьюта падает с ObjectInUse на DROP DATABASE
+        (наблюдено в CI: «database is being accessed by other users,
+        2 other sessions»).
         """
         errors = []
         barrier = threading.Barrier(len(targets))
@@ -503,6 +509,9 @@ class PriceBoundsConcurrencyTests(TransactionTestCase):
                 fn()
             except Exception as exc:  # noqa: BLE001 — собираем для assertions
                 errors.append(exc)
+            finally:
+                # Закрываем соединения ЭТОГО потока (thread-local реестр).
+                connections.close_all()
 
         threads = [
             threading.Thread(target=runner, args=(fn,), daemon=True)
@@ -539,6 +548,10 @@ class PriceBoundsConcurrencyTests(TransactionTestCase):
             except Exception as exc:  # noqa: BLE001
                 worker_errors.append(exc)
             finally:
+                # Соединение потока должно быть закрыто до его смерти —
+                # иначе сессия держит test DB и teardown падает
+                # (см. комментарий в _run_concurrently).
+                connections.close_all()
                 done.set()
 
         worker_thread = threading.Thread(target=worker, daemon=True)
