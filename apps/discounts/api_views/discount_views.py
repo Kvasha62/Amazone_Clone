@@ -1,7 +1,5 @@
 import logging
 
-from decimal import Decimal
-
 from rest_framework import status
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
@@ -12,12 +10,12 @@ from apps.discounts.models import Coupon
 from apps.discounts.serializers import (
     ApplyCouponInputSerializer,
     CouponListSerializer,
-    CouponSerializer,
     PreviewDiscountInputSerializer,
     PreviewDiscountOutputSerializer,
 )
 from apps.discounts.services.discount_service import DiscountService
 from apps.orders.models import Order
+from apps.orders.services.order_service import OrderService
 
 try:
     from drf_spectacular.utils import extend_schema, extend_schema_view
@@ -69,7 +67,7 @@ class CouponApplyView(APIView):
         except Order.DoesNotExist:
             raise NotFound('Заказ не найден.')
 
-        order = DiscountService.apply_coupon(
+        order = OrderService.apply_coupon(
             order, data['code'], user=request.user,
         )
 
@@ -103,7 +101,7 @@ class CouponRemoveView(APIView):
         except Order.DoesNotExist:
             raise NotFound('Заказ не найден.')
 
-        order = DiscountService.remove_coupon(order)
+        order = OrderService.remove_coupon(order, user=request.user)
 
         return Response({
             'order_id': order.pk,

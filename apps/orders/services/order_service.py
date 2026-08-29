@@ -23,24 +23,19 @@
 #   confirm()            — подтвердить (оплачено)
 #   cancel()             — отменить
 #   transition_status()  — общий метод перехода статуса
+#   apply_coupon()       — применить купон
+#   remove_coupon()      — снять купон
 #
 # 📖 Про Service Layer: https://martinfowler.com/eaaCatalog/serviceLayer.html
 # 📖 Про select_for_update: https://docs.djangoproject.com/en/stable/ref/models/querysets/#select-for-update
 # 📖 Про transaction.atomic: https://docs.djangoproject.com/en/stable/topics/db/transactions/#django.db.transaction.atomic
-#
-# ЧТО БУДЕТ, ЕСЛИ УДАЛИТЬ ФАЙЛ:
-#   • Все API views заказов → ImportError
-#   • POST /api/v1/orders/ → 500
-#   • Оформление заказа невозможно
 # ────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
 
 from django.db import models, transaction
-from django.db.models import F
 from django.utils import timezone
 
 from rest_framework.exceptions import NotFound, ValidationError
@@ -48,10 +43,8 @@ from rest_framework.exceptions import NotFound, ValidationError
 from apps.cart.models import Cart, CartItem
 from apps.orders.constants import (
     CANCELLATION_REASONS,
-    MAX_ITEM_QUANTITY,
     MAX_ORDER_ITEMS,
     MIN_ORDER_TOTAL,
-    ORDER_PENDING_TTL_HOURS,
 )
 from apps.orders.models import Order, OrderItem
 from apps.orders.models.order import (
@@ -63,25 +56,7 @@ logger = logging.getLogger(__name__)
 
 
 class OrderService:
-    """
-    Бизнес-логика заказов.
-
-    View не знает про транзакции, select_for_update, генерацию номеров —
-    всё инкапсулировано здесь.
-
-    Все mutating-методы обёрнуты в transaction.atomic и используют
-    пессимистичные блокировки (select_for_update), чтобы исключить
-    race conditions при параллельных запросах.
-
-    Исключения: бросаем DRF-исключения (NotFound, ValidationError),
-    чтобы view'хи могли прокинуть их в Response без лишних try/except.
-
-    📖 https://martinfowler.com/eaaCatalog/serviceLayer.html
-    """
-
-    # ==============================================================
-    # СОЗДАНИЕ ЗАКАЗА ИЗ КОРЗИНЫ
-    # ==============================================================
+    """Business logic for orders and order-owned state mutations."""
 
     @staticmethod
     @transaction.atomic
@@ -92,55 +67,14 @@ class OrderService:
         delivery_cost=0,
         notes: str = '',
     ) -> Order:
-        """
-        Создаёт заказ из активной корзины.
-
-        АЛГОРИТМ (10 шагов):
-          0. Проверить что корзина активна и принадлежит пользователю
-          1. Загрузить корзину с prefetch + select_for_update
-          2. Проверить наличие товаров в корзине
-          3. Проверить лимит позиций (MAX_ORDER_ITEMS)
-          4. Получить адрес по умолчанию (или None)
-          5. Создать Order (snapshot адреса, суммы)
-          6. Создать OrderItem (snapshot цен и названий)
-          7. Пересчитать итоговую сумму
-          8. Проверить MIN_ORDER_TOTAL
-          9. Деактивировать корзину
-         10. Вернуть заказ
-
-        ЗАЩИТА ОТ:
-          • Пустой корзины (ValidationError)
-          • Превышения лимита позиций (ValidationError)
-          • Неактивных вариантов (пропускаются)
-          • Товаров без цены (пропускаются)
-          • Суммы < MIN_ORDER_TOTAL (ValidationError)
-          • Race conditions (select_for_update)
-          • IDOR: корзина чужая → NotFound
-
-        ПОЧЕМУ SNAPSHOT ЦЕН, А НЕ FK:
-          Цены меняются. Заказ — immutable document.
-          Если цена изменилась после оформления →
-          сумма заказа должна остаться прежней.
-          Поэтому копируем price.effective_price в OrderItem.unit_price.
-
-        📖 https://docs.djangoproject.com/en/stable/topics/db/transactions/#django.db.transaction.atomic
-        """
+        """Create an order from an active user's cart."""
         from decimal import Decimal
 
-        # ── Шаг 0: Проверка ownership ──
-        # Корзина должна принадлежать пользователю.
-        # cart.user_id (integer) — без SQL.
-        # cart.user — SQL-запрос → используем user_id!
         if cart.user_id != user.pk:
             raise NotFound('Корзина не найдена.')
-
         if not cart.is_active:
             raise NotFound('Корзина не найдена.')
 
-        # ── Шаг 1: Загрузка корзины с блокировкой ──
-        # select_for_update() — блокируем корзину до COMMIT.
-        # Две параллельные попытки оформить одну корзину →
-        # вторая будет ждать.
         cart = (
             Cart.objects
             .select_for_update()
@@ -154,40 +88,28 @@ class OrderService:
         )
 
         items = list(cart.items.all())
-
-        # ── Шаг 2: Проверка наличия товаров ──
         if not items:
             raise ValidationError({
                 'detail': 'Невозможно оформить заказ из пустой корзины.',
             })
 
-        # ── Шаг 3: Фильтрация невалидных позиций ──
-        # Пропускаем:
-        #   • Неактивные варианты (variant.is_active = False)
-        #   • Варианты без цены (variant.price = None)
         from apps.catalog.constants import ProductStatus
 
         valid_items: list[CartItem] = []
         for item in items:
             variant = item.variant
-
-            # Вариант деактивирован → пропускаем
             if not variant or not variant.is_active:
                 logger.debug(
                     'order_skip_variant_inactive',
                     extra={'variant_id': item.variant_id},
                 )
                 continue
-
-            # Товар недоступен → пропускаем
             if variant.product.status != ProductStatus.ACTIVE:
                 logger.debug(
                     'order_skip_product_unavailable',
                     extra={'product_id': variant.product_id},
                 )
                 continue
-
-            # Нет цены → пропускаем (бесплатных товаров не бывает)
             price_obj = getattr(variant, 'price', None)
             if price_obj is None:
                 logger.debug(
@@ -195,15 +117,12 @@ class OrderService:
                     extra={'variant_id': item.variant_id},
                 )
                 continue
-
             valid_items.append(item)
 
         if not valid_items:
             raise ValidationError({
                 'detail': 'Нет доступных для заказа товаров в корзине.',
             })
-
-        # ── Проверка лимита позиций ──
         if len(valid_items) > MAX_ORDER_ITEMS:
             raise ValidationError({
                 'detail': (
@@ -212,37 +131,16 @@ class OrderService:
                 ),
             })
 
-        # ── Шаг 4: Получить адрес доставки ──
-        # Ищем is_default=True. Если нет — берём последний созданный.
-        address = (
-            user.addresses
-            .filter(is_default=True)
-            .first()
-        )
+        address = user.addresses.filter(is_default=True).first()
         if address is None:
-            # Нет адреса по умолчанию → берём любой
             address = user.addresses.first()
-
         if address is None:
             raise ValidationError({
                 'detail': 'Добавьте адрес доставки перед оформлением заказа.',
             })
 
-        # ── Шаг 5: Создание Order ──
         delivery_cost_decimal = Decimal(str(delivery_cost))
 
-        # Вычисляем порядковый номер для генерации order_number.
-        # ── ЗАЩИТА ОТ RACE CONDITION ──
-        # MAX()+1 — уязвим при параллельных запросах:
-        #   Транзакция A: MAX()=99 → next_seq=100
-        #   Транзакция B: MAX()=99 → next_seq=100 (КОНФЛИКТ!)
-        # UniqueConstraint на _order_number_seq поймает дубль,
-        # но без retry — IntegrityError провалит всю транзакцию.
-        #
-        # РЕШЕНИЕ: retry-цикл. При IntegrityError пересчитываем MAX().
-        # После 3 попыток — отдаём ошибку наверх (катастрофический случай).
-        #
-        # 📖 https://docs.djangoproject.com/en/stable/ref/models/querysets/#get-or-create
         from django.db import IntegrityError
         from apps.orders.constants import ORDER_NUMBER_PREFIX, ORDER_NUMBER_DIGITS
 
@@ -258,21 +156,16 @@ class OrderService:
                 cart=cart,
                 status=OrderStatus.PENDING,
                 _order_number_seq=next_seq,
-
-                # Snapshot адреса
                 recipient_name=address.recipient_name,
                 country=address.country,
                 region=address.region,
                 city=address.city,
                 street=address.street,
                 postal_code=address.postal_code,
-
-                # Суммы (пересчитаются ниже)
                 subtotal=Decimal('0.00'),
                 delivery_cost=delivery_cost_decimal,
                 discount=Decimal('0.00'),
                 total=Decimal('0.00'),
-
                 notes=notes,
             )
             order.order_number = (
@@ -280,49 +173,36 @@ class OrderService:
             )
             try:
                 order.save()
-                break  # Успех — выходим из retry-цикла
+                break
             except IntegrityError:
-                # Параллельный заказ занял этот seq — пробуем снова
                 logger.warning(
                     'order_number_collision_retry',
                     extra={'attempt': _attempt + 1, 'next_seq': next_seq},
                 )
                 continue
         else:
-            # 3 попытки исчерпаны — откатываем всю транзакцию
             raise ValidationError({
                 'detail': 'Не удалось создать номер заказа. Попробуйте снова.',
             })
 
-        # ── Шаг 6: Создание OrderItem (snapshot) ──
         order_items_bulk = []
         for cart_item in valid_items:
             variant = cart_item.variant
             price_obj = variant.price
-            effective_price = price_obj.effective_price
-
             order_items_bulk.append(OrderItem(
                 order=order,
                 variant=variant,
                 product_name=variant.product.name,
                 sku=variant.sku,
-                unit_price=effective_price,
+                unit_price=price_obj.effective_price,
                 quantity=cart_item.quantity,
             ))
-
-        # bulk_create — один INSERT для всех позиций.
-        # Быстрее чем N отдельных create().
-        # 📖 https://docs.djangoproject.com/en/stable/ref/models/querysets/#bulk-create
         OrderItem.objects.bulk_create(order_items_bulk)
 
-        # ── Шаг 7: Пересчёт итоговой суммы ──
         order.recalculate_total()
         order.save(update_fields=['subtotal', 'total', 'updated_at'])
 
-        # ── Шаг 8: Проверка MIN_ORDER_TOTAL ──
         if order.total < MIN_ORDER_TOTAL:
-            # Откатываем заказ (DELETE) — слишком маленькая сумма.
-            # transaction.atomic откатит и Order, и OrderItem.
             raise ValidationError({
                 'detail': (
                     f'Минимальная сумма заказа — {MIN_ORDER_TOTAL}₽. '
@@ -330,9 +210,6 @@ class OrderService:
                 ),
             })
 
-        # ── Шаг 9: Деактивация корзины ──
-        # Корзина «использована» — деактивируем (не удаляем!).
-        # Аналитика: «сколько корзин → заказов» (conversion rate).
         cart.is_active = False
         cart.save(update_fields=['is_active', 'updated_at'])
 
@@ -346,12 +223,7 @@ class OrderService:
                 'items_count': len(order_items_bulk),
             },
         )
-
         return order
-
-    # ==============================================================
-    # ПЕРЕХОД СТАТУСА (Finite State Machine)
-    # ==============================================================
 
     @staticmethod
     @transaction.atomic
@@ -361,49 +233,18 @@ class OrderService:
         *,
         user=None,
     ) -> Order:
-        """
-        Переводит заказ в новый статус по правилам FSM.
-
-        ПРАВИЛА (ORDER_STATUS_TRANSITIONS):
-          PENDING    → [CONFIRMED, CANCELLED]
-          CONFIRMED  → [PROCESSING, CANCELLED]
-          PROCESSING → [SHIPPED, CANCELLED]
-          SHIPPED    → [DELIVERED, CANCELLED]
-          DELIVERED  → []  (терминальный)
-          CANCELLED  → []  (терминальный)
-
-        ВЫБРАСЫВАЕТ:
-          ValidationError — если переход недопустим
-
-        ПОБОЧНЫЕ ЭФФЕКТЫ:
-          • CONFIRMED → устанавливает confirmed_at
-          • CANCELLED → устанавливает cancelled_at
-          • DELIVERED → устанавливает delivered_at
-
-        📖 https://en.wikipedia.org/wiki/Finite-state_machine
-        """
-        # select_for_update — блокируем заказ до COMMIT.
-        # Два менеджера одновременно подтверждают один заказ →
-        # второй будет ждать.
-        order = (
-            Order.objects
-            .select_for_update()
-            .get(pk=order.pk)
-        )
-
+        """Transition an order through its finite state machine."""
+        order = Order.objects.select_for_update().get(pk=order.pk)
         current_status = order.status
 
-        # ── Проверка терминального статуса ──
         if order.is_terminal:
             raise ValidationError({
                 'detail': (
                     f'Заказ {order.order_number} в терминальном статусе '
-                    f'«{order.get_status_display()}». '
-                    f'Дальнейшие переходы невозможны.'
+                    f'«{order.get_status_display()}». Дальнейшие переходы невозможны.'
                 ),
             })
 
-        # ── Проверка допустимости перехода ──
         allowed = ORDER_STATUS_TRANSITIONS.get(current_status, [])
         if new_status not in allowed:
             raise ValidationError({
@@ -413,10 +254,7 @@ class OrderService:
                 ),
             })
 
-        # ── Применяем переход ──
         order.status = new_status
-
-        # ── Таймстампы переходов ──
         now = timezone.now()
         if new_status == OrderStatus.CONFIRMED:
             order.confirmed_at = now
@@ -432,12 +270,6 @@ class OrderService:
             'cancelled_at',
             'updated_at',
         ])
-
-        # ── Интеграция с inventory (reserve/release/commit) ──
-        # После успешного перехода вызываем соответствующие методы
-        # InventoryService для управления стоком.
-        # Оборачиваем в try/except чтобы ошибка стока не ломала
-        # переход статуса (особенно для заказов без items).
         OrderService._handle_inventory_transition(order, new_status)
 
         logger.info(
@@ -450,36 +282,11 @@ class OrderService:
                 'changed_by': getattr(user, 'pk', None),
             },
         )
-
         return order
-
-    # ==============================================================
-    # ИНТЕГРАЦИЯ С INVENTORY
-    # ==============================================================
 
     @staticmethod
     def _handle_inventory_transition(order: Order, new_status: str) -> None:
-        """
-        Вызывает методы InventoryService при переходе статуса.
-
-        ПРАВИЛА:
-          • CONFIRMED  → reserve_stock()  — резервирование стока
-          • CANCELLED  → release_stock()  — освобождение резерва
-          • DELIVERED  → commit_stock()   — физическое списание
-
-        ПОЧЕМУ TRY/EXCEPT, А НЕ ЖЁСТКАЯ СВЯЗКА:
-          1) Заказ может быть создан БЕЗ OrderItem (тесты, manual order)
-             → reserve_stock() вернёт [] — это нормально.
-          2) InventoryService.reserve_stock() может бросить
-             ValidationError («недостаточно стока»).
-             В этом случае логируем ошибку, но НЕ откатываем статус.
-             Причина: платёж уже прошёл — откат creates inconsistency.
-             Решение: ручная разбирка (admin panel).
-          3) Тестовые заказы (через create_test_order) не имеют
-             реальных variant → stock может не существовать.
-
-        📖 https://docs.djangoproject.com/en/stable/topics/db/transactions/
-        """
+        """Coordinate order status changes with inventory."""
         from apps.inventory.services.inventory_service import InventoryService
 
         try:
@@ -488,39 +295,23 @@ class OrderService:
                 if movements:
                     logger.info(
                         'inventory_reserved_on_confirm',
-                        extra={
-                            'order_id': order.pk,
-                            'movements_count': len(movements),
-                        },
+                        extra={'order_id': order.pk, 'movements_count': len(movements)},
                     )
-
             elif new_status == OrderStatus.CANCELLED:
                 movements = InventoryService.release_stock(order)
                 if movements:
                     logger.info(
                         'inventory_released_on_cancel',
-                        extra={
-                            'order_id': order.pk,
-                            'movements_count': len(movements),
-                        },
+                        extra={'order_id': order.pk, 'movements_count': len(movements)},
                     )
-
             elif new_status == OrderStatus.DELIVERED:
                 movements = InventoryService.commit_stock(order)
                 if movements:
                     logger.info(
                         'inventory_committed_on_deliver',
-                        extra={
-                            'order_id': order.pk,
-                            'movements_count': len(movements),
-                        },
+                        extra={'order_id': order.pk, 'movements_count': len(movements)},
                     )
-
         except Exception as exc:
-            # Логируем ошибку, но не откатываем транзакцию.
-            # Причина: статус уже изменён, платёж проведён (если CONFIRMED).
-            # Откат = inconsistency между payment и order status.
-            # Решение: ручная разбирка через admin + audit log.
             logger.error(
                 'inventory_transition_error',
                 extra={
@@ -531,28 +322,141 @@ class OrderService:
                 },
             )
 
-    # ==============================================================
-    # ПОДТВЕРЖДЕНИЕ ЗАКАЗА (оплата прошла)
-    # ==============================================================
-
     @staticmethod
     def confirm(order: Order, *, user=None) -> Order:
-        """
-        Переводит заказ из PENDING в CONFIRMED.
-        Вызывается после успешной оплаты (payment webhook / callback).
-
-        ПОСЛЕДСТВИЯ:
-          • confirmed_at = now()
-          • Сток должен быть зарезервирован/списан (inventory app)
-          • Уведомление пользователю (email/push)
-        """
+        """Move a PENDING order to CONFIRMED."""
         return OrderService.transition_status(
             order, OrderStatus.CONFIRMED, user=user,
         )
 
-    # ==============================================================
-    # ОТМЕНА ЗАКАЗА
-    # ==============================================================
+    @staticmethod
+    @transaction.atomic
+    def apply_coupon(
+        order: Order,
+        code: str,
+        *,
+        user=None,
+    ) -> Order:
+        """Apply a coupon while owning the Order-side transaction and mutation.
+
+        Lock order first, then Coupon. Every coupon application therefore uses
+        the global lock order Order → Coupon → CouponUsage.
+        """
+        from apps.discounts.models import Coupon
+        from apps.discounts.services.discount_service import DiscountService
+
+        order = Order.objects.select_for_update().get(pk=order.pk)
+
+        if user is not None and order.user_id != user.pk:
+            raise NotFound('Заказ не найден.')
+        if order.status != OrderStatus.PENDING:
+            raise ValidationError({
+                'code': 'Скидку можно применить только к заказу в статусе PENDING.',
+            })
+        if order.discount > 0:
+            raise ValidationError({'code': 'На заказе уже применён купон.'})
+
+        apply_user = user or order.user
+        coupon = DiscountService.resolve_coupon(code)
+        coupon = Coupon.objects.select_for_update().get(pk=coupon.pk)
+
+        DiscountService.validate_coupon_object(
+            coupon,
+            user=apply_user,
+            order=order,
+        )
+
+        if coupon.is_exhausted:
+            raise ValidationError({'code': 'Лимит использований купона исчерпан.'})
+
+        user_uses = DiscountService.count_user_uses(coupon, apply_user)
+        if coupon.max_uses_per_user and user_uses >= coupon.max_uses_per_user:
+            raise ValidationError({
+                'code': 'Лимит использований купона для пользователя исчерпан.',
+            })
+
+        discount_amount = DiscountService.calculate_discount(
+            coupon,
+            order.subtotal,
+        )
+        DiscountService.register_usage(
+            coupon,
+            user=apply_user,
+            order=order,
+        )
+
+        order.discount = discount_amount
+        order.total = order.subtotal + order.delivery_cost - order.discount
+        if order.total < 0:
+            order.total = 0
+        order.save(update_fields=['discount', 'total', 'updated_at'])
+
+        logger.info(
+            'coupon_applied',
+            extra={
+                'order_id': order.pk,
+                'coupon_code': coupon.code,
+                'discount': str(discount_amount),
+                'new_total': str(order.total),
+            },
+        )
+        return order
+
+    @staticmethod
+    @transaction.atomic
+    def remove_coupon(order: Order, *, user=None) -> Order:
+        """Remove the active coupon from a PENDING order and release its slot."""
+        from apps.discounts.models import CouponUsage
+        from apps.discounts.services.discount_service import DiscountService
+
+        order = Order.objects.select_for_update().get(pk=order.pk)
+
+        if user is not None and order.user_id != user.pk:
+            raise NotFound('Заказ не найден.')
+        if order.status != OrderStatus.PENDING:
+            raise ValidationError({
+                'detail': 'Скидку можно снять только с заказа в статусе PENDING.',
+            })
+        if order.discount <= 0:
+            raise ValidationError({'detail': 'На заказе нет скидки.'})
+
+        usage = (
+            CouponUsage.objects
+            .filter(order_id=order.pk)
+            .first()
+        )
+
+        if usage is None:
+            logger.warning(
+                'coupon_usage_missing_on_remove',
+                extra={'order_id': order.pk},
+            )
+            order.discount = 0
+            order.total = order.subtotal + order.delivery_cost
+            order.save(update_fields=['discount', 'total', 'updated_at'])
+            return order
+
+        coupon = usage.coupon
+        coupon = coupon.__class__.objects.select_for_update().get(pk=coupon.pk)
+        usage = CouponUsage.objects.select_for_update().get(pk=usage.pk)
+
+        DiscountService.release_usage(usage)
+
+        old_discount = order.discount
+        order.discount = 0
+        order.total = order.subtotal + order.delivery_cost
+        order.save(update_fields=['discount', 'total', 'updated_at'])
+
+        logger.info(
+            'coupon_removed',
+            extra={
+                'order_id': order.pk,
+                'coupon_id': coupon.pk,
+                'removed_discount': str(old_discount),
+                'new_total': str(order.total),
+            },
+        )
+        return order
 
     @staticmethod
     @transaction.atomic
@@ -562,41 +466,66 @@ class OrderService:
         reason: str = '',
         user=None,
     ) -> Order:
-        """
-        Отменяет заказ с указанием причины.
+        """Cancel an order and release any active coupon usage atomically."""
+        from apps.discounts.models import CouponUsage
+        from apps.discounts.services.discount_service import DiscountService
 
-        ВАЛИДАЦИЯ:
-          • reason не должен быть пустым (извлекаем из constants)
-          • Заказ не должен быть в терминальном статусе
-
-        ПОСЛЕДСТВИЯ:
-          • cancelled_at = now()
-          • Сток должен быть освобождён (inventory app)
-          • Возврат средств (payment app)
-          • Уведомление пользователю
-
-        📖 https://docs.djangoproject.com/en/stable/topics/db/transactions/
-        """
-        # Валидация причины
         valid_reasons = [r[0] for r in CANCELLATION_REASONS]
         if reason and reason not in valid_reasons:
             raise ValidationError({
                 'reason': f'Недопустимая причина отмены: {reason}',
             })
 
-        order = OrderService.transition_status(
-            order, OrderStatus.CANCELLED, user=user,
+        order = Order.objects.select_for_update().get(pk=order.pk)
+
+        usage = (
+            CouponUsage.objects
+            .filter(order_id=order.pk)
+            .first()
+            if order.discount > 0
+            else None
         )
 
-        # Сохраняем причину отмены
-        order.cancellation_reason = reason
-        order.save(update_fields=['cancellation_reason', 'updated_at'])
+        if usage is not None:
+            coupon = usage.coupon.__class__.objects.select_for_update().get(
+                pk=usage.coupon_id,
+            )
+            usage = CouponUsage.objects.select_for_update().get(pk=usage.pk)
+            DiscountService.release_usage(usage)
+            order.discount = 0
+            order.total = order.subtotal + order.delivery_cost
 
-        # ── Возврат средств (payment app) ──
-        # Если заказ был оплачен (CONFIRMED → CANCELLED),
-        # инициируем возврат через PaymentService.
-        # Оборачиваем в try/except — ошибка возврата не должна
-        # откатывать отмену заказа (товар уже не будет доставлен).
+        current_status = order.status
+        if order.is_terminal:
+            raise ValidationError({
+                'detail': (
+                    f'Заказ {order.order_number} в терминальном статусе '
+                    f'«{order.get_status_display()}». Дальнейшие переходы невозможны.'
+                ),
+            })
+        allowed = ORDER_STATUS_TRANSITIONS.get(current_status, [])
+        if OrderStatus.CANCELLED not in allowed:
+            raise ValidationError({
+                'detail': (
+                    f'Переход «{current_status} → {OrderStatus.CANCELLED}» недопустим.'
+                ),
+            })
+
+        order.status = OrderStatus.CANCELLED
+        order.cancelled_at = timezone.now()
+        order.cancellation_reason = reason
+        update_fields = [
+            'status',
+            'cancelled_at',
+            'cancellation_reason',
+            'updated_at',
+        ]
+        if usage is not None:
+            update_fields.extend(['discount', 'total'])
+        order.save(update_fields=update_fields)
+
+        OrderService._handle_inventory_transition(order, OrderStatus.CANCELLED)
+
         from apps.payments.models import Payment
         from apps.payments.constants import PAYMENT_STATUS_SUCCEEDED
 
@@ -624,12 +553,8 @@ class OrderService:
             except Exception as exc:
                 logger.error(
                     'order_cancel_refund_failed',
-                    extra={
-                        'order_id': order.pk,
-                        'error': str(exc),
-                    },
+                    extra={'order_id': order.pk, 'error': str(exc)},
                 )
-                # Не откатываем отмену — возврат можно сделать вручную.
 
         logger.info(
             'order_cancelled',
@@ -640,31 +565,14 @@ class OrderService:
                 'cancelled_by': getattr(user, 'pk', None),
             },
         )
-
         return order
-
-    # ==============================================================
-    # СТАТИСТИКА / АГРЕГАЦИЯ
-    # ==============================================================
 
     @staticmethod
     def get_user_order_summary(user) -> dict:
-        """
-        Возвращает сводку по заказам пользователя.
-
-        ПРИМЕР ОТВЕТА:
-          {
-              'total_orders': 15,
-              'active_orders': 3,
-              'total_spent': '125000.00',
-          }
-
-        Используется в профиле пользователя и dashboard.
-        """
+        """Return a summary of the user's orders."""
         from django.db.models import Count, Q, Sum
 
         qs = Order.objects.for_user(user)
-
         stats = qs.aggregate(
             total_orders=Count('id'),
             active_orders=Count(
@@ -678,7 +586,6 @@ class OrderService:
                 filter=Q(status=OrderStatus.DELIVERED),
             ),
         )
-
         return {
             'total_orders': stats['total_orders'] or 0,
             'active_orders': stats['active_orders'] or 0,

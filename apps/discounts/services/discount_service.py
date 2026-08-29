@@ -1,35 +1,29 @@
-# ────────────────────────────────────────────────────────────────────────
-# apps/discounts/services/discount_service.py — бизнес-логика скидок.
-#
-# ОПЕРАЦИИ:
-#   validate_coupon()      — проверить купон (без применения)
-#   apply_coupon()         — применить купон к заказу
-#   remove_coupon()        — снять скидку с заказа
-#   calculate_discount()   — вычислить сумму скидки
-# ────────────────────────────────────────────────────────────────────────
-
 from __future__ import annotations
 
-import logging
 from decimal import Decimal
 
-from django.db import models, transaction
+from django.db import models
 from django.utils import timezone
-
 from rest_framework.exceptions import NotFound, ValidationError
 
-from apps.discounts.models import Coupon
+from apps.discounts.models import Coupon, CouponUsage
 from apps.orders.models import Order
-
-logger = logging.getLogger(__name__)
 
 
 class DiscountService:
-    """Бизнес-логика промокодов."""
+    """Coupon-domain validation, calculation and usage accounting.
 
-    # ==============================================================
-    # Валидация купона
-    # ==============================================================
+    This service never mutates ``orders.Order`` and never owns the outer
+    transaction. Callers coordinate the transaction and order locking.
+    """
+
+    @staticmethod
+    def resolve_coupon(code: str) -> Coupon:
+        """Load a coupon by its public code without applying business rules."""
+        try:
+            return Coupon.objects.get(code__iexact=code.strip())
+        except Coupon.DoesNotExist:
+            raise NotFound('Купон не найден.')
 
     @staticmethod
     def validate_coupon(
@@ -37,43 +31,31 @@ class DiscountService:
         user,
         order: Order,
     ) -> Coupon:
+        """Validate a coupon without mutating any domain state.
+
+        This public compatibility method is intentionally read-only. The
+        mutating apply/remove workflow lives in ``OrderService``.
         """
-        Проверяет что купон можно применить к заказу.
+        coupon = DiscountService.resolve_coupon(code)
+        DiscountService.validate_coupon_object(coupon, user=user, order=order)
+        return coupon
 
-        ВАЛИДАЦИЯ:
-          1. Купон существует
-          2. Купон активен
-          3. Срок действия не истёк
-          4. Лимит использований не исчерпан
-          5. Сумма заказа ≥ min_order_amount
-          6. Пользователь не превысил max_uses_per_user
-          7. Заказ в статусе PENDING
-
-        Возвращает Coupon если всё ОК, иначе бросает ValidationError.
-        """
-        # ── 1. Существование ──
-        try:
-            coupon = Coupon.objects.get(code__iexact=code.strip())
-        except Coupon.DoesNotExist:
-            raise NotFound('Купон не найден.')
-
+    @staticmethod
+    def validate_coupon_object(
+        coupon: Coupon,
+        *,
+        user,
+        order: Order,
+    ) -> None:
+        """Validate a coupon instance, typically after locking it."""
         now = timezone.now()
 
-        # ── 2. Активность ──
         if not coupon.is_active:
             raise ValidationError({'code': 'Купон неактивен.'})
-
-        # ── 3. Срок действия ──
         if now < coupon.started_at:
             raise ValidationError({'code': 'Купон ещё не действует.'})
         if now > coupon.ended_at:
             raise ValidationError({'code': 'Срок действия купона истёк.'})
-
-        # ── 4. Лимит использований ──
-        if coupon.is_exhausted:
-            raise ValidationError({'code': 'Лимит использований купона исчерпан.'})
-
-        # ── 5. Минимальная сумма заказа ──
         if order.subtotal < coupon.min_order_amount:
             raise ValidationError({
                 'code': (
@@ -82,123 +64,80 @@ class DiscountService:
                     f'Ваша сумма: {order.subtotal}₽.'
                 ),
             })
-
-        # ── 6. Лимит на пользователя ──
-        user_uses = order.__class__.objects.filter(
-            user=user,
-            discount__gt=Decimal('0'),
-        ).count()  # Упрощённая проверка
-        # Более точная проверка через order.coupon_set (M2M)
-        # Пока используем простую схему
-
-        # ── 7. Статус заказа ──
         if order.status != 'pending':
             raise ValidationError({
                 'code': 'Скидку можно применить только к заказу в статусе PENDING.',
             })
 
-        return coupon
-
-    # ==============================================================
-    # Применение купона
-    # ==============================================================
+    @staticmethod
+    def count_user_uses(coupon: Coupon, user) -> int:
+        """Count active applications for one coupon/user pair."""
+        return CouponUsage.objects.filter(
+            coupon_id=coupon.pk,
+            user_id=user.pk,
+        ).count()
 
     @staticmethod
-    @transaction.atomic
-    def apply_coupon(order: Order, code: str, user=None) -> Order:
-        """
-        Применяет купон к заказу.
-
-        АЛГОРИТМ:
-          1. Валидация купона
-          2. Вычисление скидки
-          3. Обновление order.discount и order.total
-          4. Инкремент times_used
-          5. Сохранение связи order-coupon (FK)
-        """
-        apply_user = user or order.user
-
-        coupon = DiscountService.validate_coupon(code, apply_user, order)
-
-        # ── 2. Вычисление скидки ──
-        discount_amount = coupon.calculate_discount(order.subtotal)
-
-        if discount_amount <= 0:
+    def calculate_discount(coupon: Coupon, order_amount: Decimal) -> Decimal:
+        """Pure coupon calculation."""
+        discount = coupon.calculate_discount(order_amount)
+        if discount <= 0:
             raise ValidationError({'code': 'Скидка равна нулю.'})
-
-        # ── 3. Обновление заказа ──
-        order = Order.objects.select_for_update().get(pk=order.pk)
-        order.discount = discount_amount
-        order.total = order.subtotal + order.delivery_cost - order.discount
-
-        if order.total < Decimal('0'):
-            order.total = Decimal('0.00')
-
-        order.save(update_fields=['discount', 'total', 'updated_at'])
-
-        # ── 4. Инкремент использований ──
-        Coupon.objects.filter(pk=coupon.pk).update(
-            times_used=models.F('times_used') + 1,
-        )
-
-        logger.info(
-            'coupon_applied',
-            extra={
-                'order_id': order.pk,
-                'coupon_code': coupon.code,
-                'discount': str(discount_amount),
-                'new_total': str(order.total),
-            },
-        )
-
-        return order
-
-    # ==============================================================
-    # Снятие скидки
-    # ==============================================================
+        return discount
 
     @staticmethod
-    @transaction.atomic
-    def remove_coupon(order: Order) -> Order:
-        """Снимает скидку с заказа (возвращает discount к 0)."""
-        if order.status != 'pending':
-            raise ValidationError({
-                'detail': 'Скидку можно снять только с заказа в статусе PENDING.',
-            })
+    def register_usage(
+        coupon: Coupon,
+        *,
+        user,
+        order: Order,
+    ) -> CouponUsage:
+        """Register one active usage and increment the coupon counter.
 
-        order = Order.objects.select_for_update().get(pk=order.pk)
+        The caller must already hold the authoritative Coupon row lock.
+        Only discounts-owned tables are mutated here.
+        """
+        if CouponUsage.objects.filter(
+            coupon_id=coupon.pk,
+            order_id=order.pk,
+        ).exists():
+            raise ValidationError({'code': 'Купон уже применён к этому заказу.'})
 
-        if order.discount <= 0:
-            raise ValidationError({'detail': 'На заказе нет скидки.'})
+        updated = Coupon.objects.filter(pk=coupon.pk).filter(
+            models.Q(max_total_uses=0)
+            | models.Q(times_used__lt=models.F('max_total_uses')),
+        ).update(times_used=models.F('times_used') + 1)
+        if updated != 1:
+            raise ValidationError({'code': 'Лимит использований купона исчерпан.'})
 
-        old_discount = order.discount
-        order.discount = Decimal('0.00')
-        order.total = order.subtotal + order.delivery_cost - order.discount
-        order.save(update_fields=['discount', 'total', 'updated_at'])
-
-        logger.info(
-            'coupon_removed',
-            extra={
-                'order_id': order.pk,
-                'removed_discount': str(old_discount),
-                'new_total': str(order.total),
-            },
+        return CouponUsage.objects.create(
+            coupon=coupon,
+            order=order,
+            user=user,
         )
 
-        return order
+    @staticmethod
+    def release_usage(usage: CouponUsage) -> None:
+        """Release an active usage and decrement the coupon counter.
 
-    # ==============================================================
-    # Вычисление скидки (preview, без применения)
-    # ==============================================================
+        The caller must hold the Coupon lock before invoking this method.
+        The usage row is locked last, preserving Order → Coupon → Usage.
+        """
+        usage = CouponUsage.objects.select_for_update().get(pk=usage.pk)
+
+        updated = Coupon.objects.filter(
+            pk=usage.coupon_id,
+            times_used__gt=0,
+        ).update(times_used=models.F('times_used') - 1)
+        if updated != 1:
+            raise ValidationError({'detail': 'Некорректный счётчик использований купона.'})
+
+        usage.delete()
 
     @staticmethod
     def preview_discount(code: str, order_amount: Decimal) -> dict:
-        """Превью скидки: сколько будет скидка для данной суммы."""
-        try:
-            coupon = Coupon.objects.get(code__iexact=code.strip())
-        except Coupon.DoesNotExist:
-            raise NotFound('Купон не найден.')
-
+        """Preview a discount without applying it or changing usage state."""
+        coupon = DiscountService.resolve_coupon(code)
         discount = coupon.calculate_discount(order_amount)
 
         return {
