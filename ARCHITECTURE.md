@@ -763,14 +763,25 @@ architecture.
 
 Django signals are allowed for local/same-domain housekeeping
 and non-critical denormalization.
-Cross-domain signals are legacy/current exceptions.
+Cross-domain signals are legacy exceptions.
 They MUST NOT be introduced for new cross-domain business workflows.
 Existing cross-domain signals must be considered technical debt
 and should be migrated to explicit service calls when practical.
 
-\* `ProductVariant.post_save` creates rows in `inventory` and `pricing`.
-This is a **known cross-domain signal** that should be migrated to an
-explicit service call (see [Future Direction](#future-direction)).
+**Status (after ARCH-001 Stage 1/2): completed for the
+`catalog` ↔ `pricing` boundary.** The former cross-domain
+`ProductVariant` signal wiring (`on_variant_change` on `post_save`,
+`on_variant_delete` on `post_delete`) has been removed together with
+the pricing-side price signals. An earlier revision of this document
+claimed that `ProductVariant.post_save` created rows in `inventory`
+and `pricing` — that was incorrect: the historical signal only
+recomputed `Product.min_price` / `max_price` on `is_active` changes,
+and `Price` / `Stock` provisioning has always been performed by
+explicit calls to the pricing and inventory services. All signals
+currently registered in the codebase are same-domain (logging and
+local denormalization); no cross-context Django signal remains on
+this boundary. See
+[Cross-Domain Signal Migration](#cross-domain-signal-migration).
 
 **Rule.** Django signals must **not** be used as the primary mechanism
 for cross-domain business orchestration. They may be used for:
@@ -1090,21 +1101,49 @@ write-model serializers.
 
 ### Cross-Domain Signal Migration
 
-**Current state**: `ProductVariant.post_save` signal auto-creates
-`Stock` and `Price` rows — a cross-domain side effect via signal.
+**Status: completed (ARCH-001 Stage 1/2).** This section previously
+described a `ProductVariant.post_save` signal as the "current state"
+that auto-creates `Stock` and `Price` rows. That description was
+outdated and, historically, inaccurate: the removed signal never
+created `Stock` or `Price` rows — it only recomputed price bounds on
+`is_active` changes. The signal has been deleted and replaced with
+explicit service calls.
 
-**Recommended direction**: Replace with an explicit call:
+Actual architecture (as implemented):
 
-```python
-# In CatalogService or a coordinator:
-def create_variant(...):
-    variant = ProductVariant(...)
-    variant.save()
-    InventoryService.get_or_create_stock(variant)
-    PricingService.get_or_create_price(variant)
-```
+- **No cross-domain `ProductVariant` signal exists.** Creating,
+  saving, or deleting a `ProductVariant` triggers no automatic
+  reaction in `pricing` or `inventory` and does not recompute
+  `Product.min_price` / `max_price`.
+- **`Price` provisioning** is an explicit pricing-service operation:
+  `PricingService.set_price()` — atomic, locks the authoritative
+  `Product` row, writes `Price` + `PriceHistory`, then republishes
+  the bounds (`bulk_set_prices()` delegates to `set_price()`).
+- **`Stock` provisioning** is an explicit inventory-service
+  operation: `InventoryService.get_or_create_stock()` /
+  `InventoryService.restock()`.
+- **Price bounds are owned by `pricing`**: 
+  `PricingService.recalculate_product_bounds()` computes MIN/MAX from
+  its own `Price` rows and publishes them through the single catalog
+  mutation point `CatalogService.set_product_prices()`.
+- **The dependency is one-way `pricing → catalog`.** The reverse
+  `catalog → pricing` dependency does not exist in application code
+  (models / services / signals / API views / admin): `catalog` never
+  imports `pricing` at runtime and never queries price tables. The
+  only catalog-package references to pricing are demo/seed management
+  commands (`populate_*`), which are outside the runtime dependency
+  graph.
 
-This makes the cross-domain dependency explicit and testable.
+Variant lifecycle changes that affect the bounds go through the
+explicit service calls documented in
+[Cross-Domain Coordination](#cross-domain-coordination)
+(`PricingService.set_variant_active()`,
+`PricingService.delete_variant()`).
+
+Regression coverage: `apps/catalog/tests/test_signals.py`
+(`VariantPriceWiringRemovedTests`) asserts that variant save/delete
+and product cascade delete do not trigger price recomputation or
+write `Product` price bounds.
 
 ### Webhook Security
 
@@ -1119,8 +1158,12 @@ with no signature verification.
 
 ### Denormalization Refresh
 
-**Current state**: `Product.rating`, `reviews_count`, `min_price`,
-`max_price` are updated by signals on each related change.
+**Current state**: `Product.rating` / `reviews_count` are updated
+synchronously by `ReviewService.recalculate_product_rating()`;
+`Product.min_price` / `max_price` are updated synchronously through
+the pricing contract — `PricingService.recalculate_product_bounds()`
+→ `CatalogService.set_product_prices()` (ARCH-001 Stage 2; no signals
+involved on this path).
 
 **Recommended direction**: For high-write scenarios, decouple
 denormalization updates via Celery tasks to avoid write amplification
