@@ -1,0 +1,68 @@
+name: Educational Case
+description: Turn a real engineering problem into a reusable student case study.
+title: "[CASE] "
+labels:
+  - education:case-study
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Engineering Problem
+    validations:
+      required: true
+  - type: textarea
+    id: discovery
+    attributes:
+      label: How Was It Discovered?
+  - type: textarea
+    id: investigation
+    attributes:
+      label: Investigation
+  - type: textarea
+    id: root-cause
+    attributes:
+      label: Root Cause
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Possible Solutions
+  - type: textarea
+    id: chosen
+    attributes:
+      label: Chosen Solution
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Why Was It Chosen?
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation
+  - type: textarea
+    id: review
+    attributes:
+      label: Code Review Findings
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests
+  - type: textarea
+    id: lessons
+    attributes:
+      label: What Did We Learn?
+    validations:
+      required: true
+  - type: dropdown
+    id: difficulty
+    attributes:
+      label: Difficulty
+      options:
+        - beginner
+        - intermediate
+        - advanced
+    validations:
+      required: true
+  - type: textarea
+    id: related
+    attributes:
+      label: Related Issues and PRs

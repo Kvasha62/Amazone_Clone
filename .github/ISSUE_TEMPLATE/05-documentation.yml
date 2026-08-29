@@ -1,0 +1,28 @@
+name: Documentation
+description: Improve or add project documentation.
+title: "[DOCS] "
+labels:
+  - type:documentation
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Documentation Need
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Source of Truth
+      description: Which code, architecture rule, decision, or process should the documentation describe?
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      value: "- [ ] "
+    validations:
+      required: true
+  - type: textarea
+    id: educational-goal
+    attributes:
+      label: Educational Goal

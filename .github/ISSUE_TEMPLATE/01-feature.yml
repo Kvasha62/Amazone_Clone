@@ -1,0 +1,66 @@
+name: Feature
+description: Plan and implement a new capability.
+title: "[FEATURE] "
+labels:
+  - type:feature
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem before describing the implementation.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem are we solving?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why does this problem exist? Include relevant architecture or existing behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be true after this issue is completed?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What is included in this task?
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of Scope
+      description: What must not be changed as part of this task?
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Architecture Constraints
+      description: Which project rules or architectural boundaries apply?
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: Use checkboxes for observable completion criteria.
+      value: "- [ ] "
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests
+      description: What must be tested or verified?
+  - type: textarea
+    id: educational-goal
+    attributes:
+      label: Educational Goal
+      description: What should a student learn from this task?

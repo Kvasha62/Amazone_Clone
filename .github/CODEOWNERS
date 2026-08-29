@@ -1,0 +1,7 @@
+# Default owner for repository changes
+* @Kvasha62
+
+# Architecture and engineering process documentation
+/ARCHITECTURE.md @Kvasha62
+/docs/ @Kvasha62
+/.github/ @Kvasha62
