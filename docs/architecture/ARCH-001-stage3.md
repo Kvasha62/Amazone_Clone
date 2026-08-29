@@ -16,9 +16,13 @@ This document supplements `ARCHITECTURE.md` for the Discounts → Orders boundar
 - `coupon` → `discounts.Coupon`, `PROTECT`
 - `order` → `orders.Order`, `PROTECT`
 - `user` → `AUTH_USER_MODEL`, `PROTECT`
-- `UNIQUE(coupon, order)` prevents duplicate application to one order.
+- `UNIQUE(order)` — at most one ACTIVE usage per Order, regardless of coupon
+  (`uq_coupon_usage_order`; enforced by the DB and pre-checked in
+  `DiscountService.register_usage()`).
 - `(coupon, user)` is indexed for per-user counting.
-- `order` is indexed for reverse lookup during removal/cancellation.
+- Reverse lookup by `order` (removal/cancellation) is served by the implicit
+  index of `UNIQUE(order)`; a separate `(order)` index is redundant and
+  intentionally absent (ARCH-002).
 
 `Coupon.times_used` is the denormalized count of active `CouponUsage` rows.
 The authoritative mutation paths are `DiscountService.register_usage()` and
@@ -45,9 +49,17 @@ The global limit also has a conditional `UPDATE` as defense in depth.
 Usage represents an active application, not a lifetime redemption:
 
 - apply: `times_used + 1`
-- remove: `times_used - 1`
-- cancel: `times_used - 1`
-- apply again after remove/cancel: allowed when limits permit
+- remove (PENDING only): `times_used - 1`
+- cancel from PENDING: `times_used - 1`
+- cancel from CONFIRMED / PROCESSING / SHIPPED: usage stays consumed —
+  `times_used`, `Order.discount` and `Order.total` are NOT touched
+  (ARCH-002: the slot is released only on the `PENDING → CANCELLED`
+  transition; the status is read immediately after the Order lock and
+  validated before any mutation)
+- apply again after remove / cancel-from-PENDING: allowed when limits permit
+
+Order-status gating is owned by `OrderService` (the orders FSM owner);
+`DiscountService` contains no order-status checks or hardcoded status values.
 
 A legacy order with `discount > 0` but no `CouponUsage` is handled gracefully by
 remove; it is logged and the discount is cleared without guessing a coupon.

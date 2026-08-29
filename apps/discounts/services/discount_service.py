@@ -64,10 +64,9 @@ class DiscountService:
                     f'Ваша сумма: {order.subtotal}₽.'
                 ),
             })
-        if order.status != 'pending':
-            raise ValidationError({
-                'code': 'Скидку можно применить только к заказу в статусе PENDING.',
-            })
+        # ARCH-002: проверка статуса заказа — зона ответственности
+        # OrderService (владелец FSM заказов); DiscountService не дублирует
+        # её и не содержит hardcoded-значений статусов orders.
 
     @staticmethod
     def count_user_uses(coupon: Coupon, user) -> int:
@@ -97,8 +96,11 @@ class DiscountService:
         The caller must already hold the authoritative Coupon row lock.
         Only discounts-owned tables are mutated here.
         """
+        # ARCH-002: guard по order (а не по паре coupon+order) — на одном
+        # заказе максимально одна активная usage ЛЮБОГО купона, в силу
+        # UNIQUE(order) (uq_coupon_usage_order). Guard переводит нарушение
+        # в ValidationError до удара по БД-ограничению.
         if CouponUsage.objects.filter(
-            coupon_id=coupon.pk,
             order_id=order.pk,
         ).exists():
             raise ValidationError({'code': 'Купон уже применён к этому заказу.'})

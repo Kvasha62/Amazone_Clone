@@ -3,13 +3,14 @@ from decimal import Decimal
 from threading import Barrier
 
 from django.contrib.auth import get_user_model
-from django.db import connections
-from django.test import TransactionTestCase, skipUnlessDBFeature
+from django.db import IntegrityError, connections, transaction
+from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
 from rest_framework.exceptions import ValidationError
 
 from apps.discounts.models import CouponUsage
 from apps.discounts.tests.factories import create_test_coupon
 from apps.orders.models import Order
+from apps.orders.models.order import OrderStatus
 from apps.orders.services.order_service import OrderService
 from apps.orders.tests.factories import create_test_order, create_test_user
 
@@ -116,3 +117,128 @@ class CouponConcurrencyTests(TransactionTestCase):
             coupon.times_used,
             CouponUsage.objects.filter(coupon=coupon).count(),
         )
+
+    # ── ARCH-002 (п.5): apply vs remove / apply vs cancel ──────────────
+
+    def _remove(self, order_id, user_id, barrier):
+        connections.close_all()
+        try:
+            barrier.wait(timeout=10)
+            user = User.objects.get(pk=user_id)
+            order = Order.objects.get(pk=order_id)
+            try:
+                OrderService.remove_coupon(order, user=user)
+                return 'ok'
+            except ValidationError:
+                return 'error'
+        finally:
+            connections.close_all()
+
+    def _cancel(self, order_id, user_id, barrier):
+        connections.close_all()
+        try:
+            barrier.wait(timeout=10)
+            user = User.objects.get(pk=user_id)
+            order = Order.objects.get(pk=order_id)
+            try:
+                OrderService.cancel(order, user=user)
+                return 'ok'
+            except ValidationError:
+                return 'error'
+        finally:
+            connections.close_all()
+
+    def _run_jobs(self, jobs):
+        barrier = Barrier(len(jobs))
+        with ThreadPoolExecutor(max_workers=len(jobs)) as executor:
+            futures = [executor.submit(fn, barrier) for fn in jobs]
+            return [future.result(timeout=30) for future in futures]
+
+    def test_apply_vs_remove_same_order_ends_consistent(self):
+        """Гонка apply/remove на одном заказе сериализуется lock'ом Order.
+
+        Допустимы оба исхода (remove выиграл → error+ok; apply выиграл →
+        ok+ok), но инварианты сходятся: times_used == числу usage-строк,
+        usage существует ⇔ discount > 0, total согласован с discount.
+        """
+        coupon = create_test_coupon(
+            code='RACE1',
+            max_total_uses=10,
+            max_uses_per_user=10,
+        )
+        user = create_test_user()
+        order = create_test_order(user, subtotal=Decimal('1000.00'), total=Decimal('1000.00'))
+
+        results = self._run_jobs([
+            lambda barrier: self._apply(order.pk, user.pk, coupon.code, barrier),
+            lambda barrier: self._remove(order.pk, user.pk, barrier),
+        ])
+
+        self.assertIn(sorted(results), [['error', 'ok'], ['ok', 'ok']])
+        order.refresh_from_db()
+        coupon.refresh_from_db()
+        usages = CouponUsage.objects.filter(order=order).count()
+        self.assertEqual(usages, 1 if order.discount > 0 else 0)
+        self.assertEqual(coupon.times_used, usages)
+        expected_total = order.subtotal + order.delivery_cost - order.discount
+        self.assertEqual(order.total, max(expected_total, Decimal('0.00')))
+
+    def test_apply_vs_cancel_same_order_ends_released(self):
+        """Гонка apply/cancel на одном заказе: order → CANCELLED, слот
+        купона не теряется и не остаётся «висеть» — либо apply не прошёл
+        (заказ уже не PENDING), либо cancel освободил usage при
+        PENDING → CANCELLED."""
+        coupon = create_test_coupon(
+            code='RACE2',
+            max_total_uses=10,
+            max_uses_per_user=10,
+        )
+        user = create_test_user()
+        order = create_test_order(user, subtotal=Decimal('1000.00'), total=Decimal('1000.00'))
+
+        results = self._run_jobs([
+            lambda barrier: self._apply(order.pk, user.pk, coupon.code, barrier),
+            lambda barrier: self._cancel(order.pk, user.pk, barrier),
+        ])
+
+        self.assertIn(sorted(results), [['error', 'ok'], ['ok', 'ok']])
+        order.refresh_from_db()
+        coupon.refresh_from_db()
+        self.assertEqual(order.status, OrderStatus.CANCELLED)
+        self.assertEqual(coupon.times_used, 0)
+        self.assertEqual(CouponUsage.objects.filter(order=order).count(), 0)
+        self.assertEqual(order.discount, Decimal('0.00'))
+        self.assertEqual(order.total, Decimal('1000.00'))
+
+
+class CouponUsageOrderUniquenessTests(TestCase):
+    """ARCH-002 (п.3/п.5): БД-гарантия UNIQUE(order) на CouponUsage.
+
+    На одном заказе максимум одна активная usage — ЛЮБОГО купона
+    (прежний вариант UNIQUE(coupon, order) этого не обеспечивал).
+    """
+
+    def test_second_usage_same_order_other_coupon_raises_integrity_error(self):
+        user = create_test_user()
+        order = create_test_order(user, subtotal=Decimal('1000.00'), total=Decimal('1000.00'))
+        coupon1 = create_test_coupon(code='UNIQ1')
+        coupon2 = create_test_coupon(code='UNIQ2')
+        CouponUsage.objects.create(coupon=coupon1, order=order, user=user)
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                CouponUsage.objects.create(coupon=coupon2, order=order, user=user)
+
+        self.assertEqual(CouponUsage.objects.filter(order=order).count(), 1)
+
+    def test_second_usage_same_order_same_coupon_raises_integrity_error(self):
+        user = create_test_user()
+        order = create_test_order(user, subtotal=Decimal('1000.00'), total=Decimal('1000.00'))
+        coupon = create_test_coupon(code='UNIQ3')
+        CouponUsage.objects.create(coupon=coupon, order=order, user=user)
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                CouponUsage.objects.create(coupon=coupon, order=order, user=user)
+
+        self.assertEqual(CouponUsage.objects.filter(order=order).count(), 1)
