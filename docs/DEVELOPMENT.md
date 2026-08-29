@@ -59,24 +59,27 @@ Do not develop directly on `main`.
 Use:
 
 ```text
-<ISSUE-ID> <imperative description>
+<ISSUE-ID>: <Imperative description>
 ```
 
 Examples:
 
 ```text
-EDU-024 Add ownership validation
-EDU-024 Add unauthorized access regression test
-EDU-024 Move validation to application layer
+EDU-024: Add ownership validation
+EDU-024: Add unauthorized access regression test
+EDU-024: Move validation to application layer
 ```
 
 Rules:
 
 1. Reference the Issue.
-2. Describe one logical change.
-3. Use imperative wording.
-4. Avoid generic messages such as `fix`, `update`, or `changes`.
-5. Do not mix unrelated changes.
+2. Put a colon and one space between the Issue ID and the description.
+3. Start the description with a capital imperative verb.
+4. Do not use Conventional Commit prefixes such as `fix:`, `feat:`, or similar.
+5. Describe one logical change.
+6. Use imperative wording.
+7. Avoid generic messages such as `fix`, `update`, or `changes`.
+8. Do not mix unrelated changes.
 
 ## 5. Pull Requests
 
