@@ -1,0 +1,63 @@
+name: Bug
+description: Report a reproducible defect and define how it will be proven fixed.
+title: "[BUG] "
+labels:
+  - type:bug
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed Behavior
+      description: What actually happens?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should happen?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Provide the smallest reliable reproduction.
+    validations:
+      required: true
+  - type: textarea
+    id: root-cause
+    attributes:
+      label: Root Cause
+      description: Leave empty initially. Fill this only after investigation.
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: What functionality, users, or invariants are affected?
+  - type: textarea
+    id: components
+    attributes:
+      label: Relevant Components
+  - type: textarea
+    id: architecture
+    attributes:
+      label: Architecture Rules
+      description: Which documented rules may be involved?
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      value: "- [ ] "
+    validations:
+      required: true
+  - type: textarea
+    id: regression
+    attributes:
+      label: Regression Tests
+      description: What test must prevent this bug from returning?
+  - type: textarea
+    id: educational-goal
+    attributes:
+      label: Educational Goal
+      description: What should a student learn from this investigation?
