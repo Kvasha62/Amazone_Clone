@@ -697,8 +697,15 @@ OrderService.transition_status(CONFIRMED)
 
 OrderService.cancel()
   → InventoryService.release_stock(order)
+  → DiscountService.release_usage(usage)    # only on PENDING → CANCELLED
   → PaymentService.refund_payment(payment, ...)
 ```
+
+Coupon coordination (`apply_coupon` / `remove_coupon` / `cancel`) follows the
+same pattern: `OrderService` owns the transaction and locks
+(`Order → Coupon → CouponUsage`), while `DiscountService` mutates only
+discounts-owned usage state. See
+`docs/architecture/ARCH-001-stage3.md` for the full contract.
 
 This is the **primary** mechanism for cross-domain coordination.
 

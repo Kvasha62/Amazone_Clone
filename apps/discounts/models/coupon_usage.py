@@ -32,13 +32,12 @@ class CouponUsage(BaseModel):
                 name="uq_coupon_usage_order",
             ),
         ]
+        # ARCH-002: обратный поиск по order обслуживает неявный индекс
+        # ограничения UNIQUE(order) (uq_coupon_usage_order) — отдельный
+        # Index(fields=['order']) избыточен и удалён (миграция 0004).
         indexes = [
             models.Index(
                 fields=["coupon", "user"],
                 name="idx_coupon_usage_coupon_user",
-            ),
-            models.Index(
-                fields=["order"],
-                name="idx_coupon_usage_order",
             ),
         ]

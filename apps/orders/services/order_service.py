@@ -478,23 +478,9 @@ class OrderService:
 
         order = Order.objects.select_for_update().get(pk=order.pk)
 
-        usage = (
-            CouponUsage.objects
-            .filter(order_id=order.pk)
-            .first()
-            if order.discount > 0
-            else None
-        )
-
-        if usage is not None:
-            coupon = usage.coupon.__class__.objects.select_for_update().get(
-                pk=usage.coupon_id,
-            )
-            usage = CouponUsage.objects.select_for_update().get(pk=usage.pk)
-            DiscountService.release_usage(usage)
-            order.discount = 0
-            order.total = order.subtotal + order.delivery_cost
-
+        # ARCH-002: статус фиксируется сразу после захвата lock'а Order и
+        # валидируется ДО любых мутаций — release купонного слота возможен
+        # ТОЛЬКО при переходе PENDING → CANCELLED.
         current_status = order.status
         if order.is_terminal:
             raise ValidationError({
@@ -510,6 +496,27 @@ class OrderService:
                     f'Переход «{current_status} → {OrderStatus.CANCELLED}» недопустим.'
                 ),
             })
+
+        # ARCH-002: слот купона освобождается только при отмене ещё не
+        # подтверждённого заказа. При CONFIRMED/PROCESSING/SHIPPED → CANCELLED
+        # использование остаётся потреблённым: times_used не уменьшается,
+        # Order.discount/total не пересчитываются.
+        # Порядок блокировок прежний: Order → Coupon → CouponUsage.
+        usage = None
+        if current_status == OrderStatus.PENDING and order.discount > 0:
+            usage = (
+                CouponUsage.objects
+                .filter(order_id=order.pk)
+                .first()
+            )
+            if usage is not None:
+                coupon = usage.coupon.__class__.objects.select_for_update().get(
+                    pk=usage.coupon_id,
+                )
+                usage = CouponUsage.objects.select_for_update().get(pk=usage.pk)
+                DiscountService.release_usage(usage)
+                order.discount = 0
+                order.total = order.subtotal + order.delivery_cost
 
         order.status = OrderStatus.CANCELLED
         order.cancelled_at = timezone.now()

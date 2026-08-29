@@ -192,6 +192,64 @@ class CancelCouponTests(TestCase):
         self.assertEqual(coupon.times_used, 0)
         self.assertFalse(CouponUsage.objects.filter(order=order).exists())
 
+    # ARCH-002 (п.4): release купонного слота — ТОЛЬКО при переходе
+    # PENDING → CANCELLED. Отмена уже подтверждённого/собираемого/
+    # отправленного заказа НЕ освобождает слот и не трогает
+    # times_used / Order.discount / Order.total.
+
+    @staticmethod
+    def _order_with_usage_in_status(status, code):
+        user = create_test_user()
+        order = create_test_order(
+            user,
+            subtotal=Decimal('1000.00'),
+            total=Decimal('1000.00'),
+        )
+        coupon = create_test_coupon(code=code, discount_value=Decimal('10'))
+        OrderService.apply_coupon(order, code, user=user)
+        order.status = status
+        order.save(update_fields=['status', 'updated_at'])
+        return user, order, coupon
+
+    def test_cancel_from_confirmed_keeps_coupon_usage(self):
+        user, order, coupon = self._order_with_usage_in_status(
+            OrderStatus.CONFIRMED, 'KEEPC',
+        )
+        OrderService.cancel(order, user=user)
+        coupon.refresh_from_db()
+        order.refresh_from_db()
+        self.assertEqual(order.status, OrderStatus.CANCELLED)
+        self.assertEqual(coupon.times_used, 1)
+        self.assertTrue(CouponUsage.objects.filter(order=order).exists())
+        self.assertEqual(order.discount, Decimal('100.00'))
+        self.assertEqual(order.total, Decimal('900.00'))
+
+    def test_cancel_from_processing_keeps_coupon_usage(self):
+        user, order, coupon = self._order_with_usage_in_status(
+            OrderStatus.PROCESSING, 'KEEPP',
+        )
+        OrderService.cancel(order, user=user)
+        coupon.refresh_from_db()
+        order.refresh_from_db()
+        self.assertEqual(order.status, OrderStatus.CANCELLED)
+        self.assertEqual(coupon.times_used, 1)
+        self.assertTrue(CouponUsage.objects.filter(order=order).exists())
+        self.assertEqual(order.discount, Decimal('100.00'))
+        self.assertEqual(order.total, Decimal('900.00'))
+
+    def test_cancel_from_shipped_keeps_coupon_usage(self):
+        user, order, coupon = self._order_with_usage_in_status(
+            OrderStatus.SHIPPED, 'KEEPS',
+        )
+        OrderService.cancel(order, user=user)
+        coupon.refresh_from_db()
+        order.refresh_from_db()
+        self.assertEqual(order.status, OrderStatus.CANCELLED)
+        self.assertEqual(coupon.times_used, 1)
+        self.assertTrue(CouponUsage.objects.filter(order=order).exists())
+        self.assertEqual(order.discount, Decimal('100.00'))
+        self.assertEqual(order.total, Decimal('900.00'))
+
 
 class PreviewDiscountTests(TestCase):
 
