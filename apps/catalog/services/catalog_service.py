@@ -532,6 +532,113 @@ class CatalogService:
         )
         return product
 
+    @staticmethod
+    def set_review_stats(
+        product: Product,
+        *,
+        rating: Decimal | int | str,
+        reviews_count: int,
+    ) -> Product:
+        """
+        Обновляет денормализованные rating / reviews_count на Product.
+
+        Это авторитетный service-level путь записи review-агрегатов
+        товара в bounded context `catalog` (ARCH-001 Stage C1). Он
+        принимает УЖЕ РАССЧИТАННЫЕ значения и только записывает их в
+        catalog.Product.
+
+        ARCH-001 (Reviews → Catalog ownership):
+          • Расчёт агрегатов AVG(rating)/COUNT по одобренным отзывам —
+            domain knowledge `reviews`
+            (ReviewService.recalculate_product_rating собирает значения
+            из СВОИХ данных Review и передаёт результат сюда).
+          • `catalog` владеет записью собственных полей: на сервисном
+            уровне Product.rating / Product.reviews_count мутируются
+            ТОЛЬКО здесь.
+          • `catalog` НЕ читает и НЕ ищет отзывы `reviews` — никакой
+            обратной зависимости catalog → reviews нет.
+          • `reviews` не имеет права мутировать `catalog.Product`
+            напрямую, поэтому вызывает этот публичный контракт.
+
+        Django Admin-форма товара пока остаётся отдельной поверхностью,
+        способной редактировать эти поля (residual H3); Admin hardening
+        намеренно не входит в этап C1.
+
+        ГРАНИЦЫ ЗНАЧЕНИЙ — зеркалят валидаторы полей catalog.Product
+        (rating: Decimal(3,2), 0.00..5.00; reviews_count: >= 0):
+        знание о допустимых значениях ПОЛЕЙ каталога принадлежит
+        каталогу, а не вызывающему контексту.
+
+        АЛГОРИТМ:
+          1. Провалидировать rating (0.00..5.00) и reviews_count (>= 0).
+          2. product.rating / product.reviews_count = переданные значения.
+          3. Сохранить ТОЛЬКО эти поля (не трогаем name/min_price/...).
+
+        Внешнюю транзакцию owns вызывающий код (review-сервис); метод
+        сознательно не открывает свою и не блокирует строки —
+        concurrency-hardening вынесен в отдельную задачу ARCH-001(C).
+        """
+        if not isinstance(rating, Decimal):
+            try:
+                rating = Decimal(str(rating))
+            except ArithmeticError:
+                raise ValidationError(
+                    {'rating': 'Рейтинг должен быть числом.'},
+                )
+
+        # Специальные значения Decimal (NaN, ±Infinity и т.п.)
+        # отклоняются предусмотренным ValidationError: публичный
+        # сервисный контракт не должен «протекать»
+        # decimal.InvalidOperation (сравнение с NaN / quantize
+        # бесконечности падают на уровне decimal).
+        if not rating.is_finite():
+            raise ValidationError(
+                {'rating': 'Рейтинг должен быть конечным числом.'},
+            )
+
+        # Поле rating — numeric(3,2): приводим к 2 знакам до записи.
+        # Значения с непредставимым порядком величины (напр. 1E+30)
+        # не влезают в numeric(3,2) — тоже предусмотренная ошибка,
+        # а не InvalidOperation наружу.
+        try:
+            rating = rating.quantize(Decimal('0.01'))
+        except ArithmeticError:
+            raise ValidationError(
+                {'rating': 'Рейтинг должен быть от 0.00 до 5.00.'},
+            )
+
+        # 0.00..5.00 — границы валидаторов поля catalog.Product.rating.
+        if rating < Decimal('0.00') or rating > Decimal('5.00'):
+            raise ValidationError(
+                {'rating': 'Рейтинг должен быть от 0.00 до 5.00.'},
+            )
+
+        try:
+            reviews_count = int(reviews_count)
+        except (TypeError, ValueError):
+            raise ValidationError(
+                {'reviews_count': 'Количество отзывов должно быть целым числом.'},
+            )
+
+        if reviews_count < 0:
+            raise ValidationError(
+                {'reviews_count': 'Количество отзывов не может быть отрицательным.'},
+            )
+
+        product.rating = rating
+        product.reviews_count = reviews_count
+        product.save(update_fields=['rating', 'reviews_count', 'updated_at'])
+
+        logger.debug(
+            'product_review_stats_updated',
+            extra={
+                'product_id': product.pk,
+                'rating': str(product.rating),
+                'reviews_count': product.reviews_count,
+            },
+        )
+        return product
+
     # ----------------------------------------------------------
     # Варианты: catalog-owned мутации price-relevant состояния
     # ----------------------------------------------------------
