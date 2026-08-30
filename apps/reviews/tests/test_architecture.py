@@ -272,6 +272,13 @@ class AdminAggregateSurfaceArchitectureTests(SimpleTestCase):
         save_source = inspect.getsource(ProductAdmin.save_model)
         self.assertIn('PRODUCT_ADMIN_PROTECTED_FIELDS', save_source)
         self.assertIn('PermissionDenied', save_source)
+        self.assertIn('update_fields=update_fields', save_source)
+
+        update_fields_source = inspect.getsource(
+            ProductAdmin._admin_change_update_fields,
+        )
+        self.assertIn('PRODUCT_ADMIN_PROTECTED_FIELDS', update_fields_source)
+        self.assertIn('form.changed_data', update_fields_source)
 
     def test_product_admin_does_not_import_reviews_service(self):
         source = inspect.getsource(product_admin_module)

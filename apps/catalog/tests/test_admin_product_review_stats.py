@@ -11,14 +11,24 @@ ProductAdmin may display these values, but it must not become a second
 writer. The tests cover the generated Django Admin form and the server-side
 ``save_model`` defense-in-depth path.
 """
+import threading
 from decimal import Decimal
 
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
-from django.test import RequestFactory, TestCase
+from django.db import connection, connections, transaction
+from django.db.models import Avg, Count
+from django.test import (
+    RequestFactory,
+    TestCase,
+    TransactionTestCase,
+    skipUnlessDBFeature,
+)
+from django.test.utils import CaptureQueriesContext
 
 from apps.catalog.admin.product_admin import (
+    PRODUCT_ADMIN_PROTECTED_FIELDS,
     PRODUCT_REVIEW_AGGREGATE_FIELDS,
     ProductAdmin,
 )
@@ -26,9 +36,19 @@ from apps.catalog.constants import ProductStatus
 from apps.catalog.models import Brand, Category, Product
 from apps.catalog.services.catalog_service import CatalogService
 from apps.orders.tests.factories import create_test_user
+from apps.reviews.models import Review
 from apps.reviews.services.review_service import ReviewService
 
 User = get_user_model()
+
+
+def expected_review_aggregate(product):
+    """Independent approved-review aggregate used by H2 regression tests."""
+    approved = product.reviews.filter(is_approved=True)
+    total = approved.aggregate(total=Count('id'))['total'] or 0
+    avg_raw = approved.aggregate(avg=Avg('rating'))['avg']
+    avg = round(Decimal(str(avg_raw or Decimal('0.00'))), 2)
+    return avg, total
 
 
 class ProductAdminReviewAggregateReadOnlyTests(TestCase):
@@ -197,6 +217,47 @@ class ProductAdminReviewAggregateGuardTests(TestCase):
         self.assertEqual(self.product.rating, before_rating)
         self.assertEqual(self.product.reviews_count, before_count)
 
+    def test_save_model_update_sql_excludes_protected_aggregate_fields(self):
+        """ProductAdmin change-save must not full-save derived fields."""
+        self.product.name = 'Review Stats SQL Product Renamed'
+        self.product.description = 'SQL field-set check'
+
+        with CaptureQueriesContext(connection) as captured:
+            self.admin.save_model(
+                self.request, self.product, form=None, change=True,
+            )
+
+        product_updates = [
+            query['sql']
+            for query in captured.captured_queries
+            if 'UPDATE "catalog_product"' in query['sql']
+        ]
+        self.assertTrue(product_updates)
+        update_sql = '\n'.join(product_updates)
+
+        self.assertIn('"name"', update_sql)
+        self.assertIn('"description"', update_sql)
+        self.assertIn('"updated_at"', update_sql)
+        for field in PRODUCT_ADMIN_PROTECTED_FIELDS:
+            self.assertNotIn(f'"{field}"', update_sql)
+
+    def test_save_model_status_activation_still_sets_published_at(self):
+        """update_fields must preserve Product.save() managed fields."""
+        draft = Product.objects.create(
+            name='Review Stats Draft Product',
+            brand=self.brand,
+            primary_category=self.category,
+            status=ProductStatus.DRAFT,
+        )
+        self.assertIsNone(draft.published_at)
+
+        draft.status = ProductStatus.ACTIVE
+        self.admin.save_model(self.request, draft, form=None, change=True)
+
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ProductStatus.ACTIVE)
+        self.assertIsNotNone(draft.published_at)
+
     def test_crafted_admin_post_cannot_persist_review_aggregates(self):
         """End-to-end: forged POST values are not saved via ProductAdmin."""
         self.client.force_login(self.staff)
@@ -229,15 +290,146 @@ class ProductAdminReviewAggregateGuardTests(TestCase):
             'rating': '1.00',
             'reviews_count': '99',
         }
-        response = self.client.post(
-            f'/admin/catalog/product/{self.product.pk}/change/', data,
-        )
+        with CaptureQueriesContext(connection) as captured:
+            response = self.client.post(
+                f'/admin/catalog/product/{self.product.pk}/change/', data,
+            )
 
         self.assertEqual(response.status_code, 302)
+        product_updates = [
+            query['sql']
+            for query in captured.captured_queries
+            if 'UPDATE "catalog_product"' in query['sql']
+        ]
+        self.assertTrue(product_updates)
+        update_sql = '\n'.join(product_updates)
+        self.assertIn('"name"', update_sql)
+        self.assertIn('"updated_at"', update_sql)
+        for field in PRODUCT_ADMIN_PROTECTED_FIELDS:
+            self.assertNotIn(f'"{field}"', update_sql)
+
         self.product.refresh_from_db()
         self.assertEqual(self.product.name, 'Review Stats Posted Product')
         self.assertEqual(self.product.rating, before_rating)
         self.assertEqual(self.product.reviews_count, before_count)
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class ProductAdminReviewAggregateConcurrencyTests(TransactionTestCase):
+    """Regression: stale ProductAdmin instances must not overwrite aggregates."""
+
+    def setUp(self):
+        self.site = AdminSite()
+        self.admin = ProductAdmin(Product, self.site)
+        self.factory = RequestFactory()
+        self.staff = User.objects.create_user(
+            username='reviewstatsconcurrency',
+            email='reviewstatsconcurrency@test.com',
+            password='admin123!',
+            is_staff=True,
+            is_superuser=True,
+        )
+        self.request = self.factory.post('/admin/catalog/product/')
+        self.request.user = self.staff
+        self.brand = Brand.objects.create(name='ReviewStatsConcurrencyBrand')
+        self.category = Category.add_root(name='ReviewStatsConcurrencyCat')
+        self.product = Product.objects.create(
+            name='Review Stats Concurrency Product',
+            brand=self.brand,
+            primary_category=self.category,
+            status=ProductStatus.ACTIVE,
+        )
+        self.review_user = create_test_user(
+            email='reviewstatsconcurrency-author@test.com',
+        )
+        self.review = ReviewService.create_review(
+            self.review_user,
+            self.product,
+            rating=4,
+            text='Достаточно подробный отзыв для проверки конкурентности.',
+        )
+
+    def test_stale_product_admin_save_does_not_overwrite_review_stats(self):
+        """T1 Admin safe edit must exclude stale rating/reviews_count from UPDATE."""
+        admin_product = Product.objects.get(pk=self.product.pk)
+        admin_product.name = 'Review Stats Concurrency Product Renamed'
+        product_id = self.product.pk
+        review_id = self.review.pk
+        admin_name = admin_product.name
+        save_started = threading.Event()
+        service_committed = threading.Event()
+        original_save = Product.save
+        admin_save_kwargs = {}
+        errors = []
+
+        def patched_save(instance, *args, **kwargs):
+            if (
+                instance.pk == product_id
+                and instance.name == admin_name
+                and not save_started.is_set()
+            ):
+                admin_save_kwargs.update(kwargs)
+                save_started.set()
+                if not service_committed.wait(timeout=10):
+                    raise RuntimeError('ReviewService update did not commit')
+            return original_save(instance, *args, **kwargs)
+
+        def admin_safe_edit():
+            connections.close_all()
+            try:
+                with transaction.atomic():
+                    self.admin.save_model(
+                        self.request,
+                        admin_product,
+                        form=None,
+                        change=True,
+                    )
+            except Exception as exc:  # noqa: BLE001 - asserted below.
+                errors.append(exc)
+            finally:
+                connections.close_all()
+
+        Product.save = patched_save
+        try:
+            admin_thread = threading.Thread(target=admin_safe_edit)
+            admin_thread.start()
+
+            self.assertTrue(
+                save_started.wait(timeout=10),
+                'ProductAdmin did not reach Product.save()',
+            )
+
+            connections.close_all()
+            service_review = ReviewService.update_review(
+                Review.objects.select_related('product', 'user').get(pk=review_id),
+                user=self.review_user,
+                rating=5,
+            )
+            self.assertEqual(service_review.rating, 5)
+
+            after_service = Product.objects.get(pk=product_id)
+            self.assertEqual(after_service.rating, Decimal('5.00'))
+            self.assertEqual(after_service.reviews_count, 1)
+
+            service_committed.set()
+            admin_thread.join(timeout=10)
+            self.assertFalse(admin_thread.is_alive())
+        finally:
+            Product.save = original_save
+            connections.close_all()
+
+        self.assertEqual(errors, [])
+        update_fields = set(admin_save_kwargs['update_fields'])
+        for field in PRODUCT_ADMIN_PROTECTED_FIELDS:
+            self.assertNotIn(field, update_fields)
+
+        final_product = Product.objects.get(pk=product_id)
+        expected_rating, expected_count = expected_review_aggregate(final_product)
+        self.assertEqual(final_product.name, admin_name)
+        self.assertEqual(final_product.rating, expected_rating)
+        self.assertEqual(final_product.reviews_count, expected_count)
+        self.assertEqual(final_product.rating, Decimal('5.00'))
+        self.assertEqual(final_product.reviews_count, 1)
 
 
 class ProductReviewAggregateAuthoritativePathStillWorksTests(TestCase):
