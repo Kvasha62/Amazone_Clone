@@ -769,3 +769,60 @@ addresses.ts:5:139: ERROR: Syntax error "a"
 4. `git push -u origin main`
 5. Применить миграции: `python manage.py migrate`
 6. Фронтенд: `cd I:\NewPythonProjects\frontend && npm install && npm run dev`
+
+---
+
+## Day 5 — 2026-08-30: Issue #19 — Admin: Product bounds read-only
+
+### Контекст
+PR #18 (ARCH-001 Stage 2) закрыл Admin-обход для `ProductVariant.is_active`
+и удаления вариантов. Остался residual **M1**: `Product.min_price` /
+`Product.max_price` можно было менять руками в `ProductAdmin` во fieldset
+«Цены (авто)» — UI утверждал «пересчитываются автоматически», но
+серверного запрета не было.
+
+Авторитетный путь единственный:
+
+```text
+PricingService.recalculate_product_bounds(product)
+    → CatalogService.set_product_prices(product, min_price, max_price)
+    → Product.min_price / max_price
+```
+
+### Выполнено
+1. **`apps/catalog/admin/product_admin.py`**
+   - `min_price` / `max_price` добавлены в `readonly_fields`
+     (+ константа `PRODUCT_PRICE_BOUNDS_FIELDS`);
+     Django исключает их из генерируемой ModelForm → в форме нет
+     `<input name="min_price">`.
+   - `ProductAdmin.save_model()` — второй слой защиты (defense-in-depth):
+     `PermissionDenied`, если сохранённые границы отличаются от
+     хранимых в БД (change), либо если новый товар создаётся с
+     непустыми границами (add).
+   - Обновлён description fieldset-а «Цены (авто)».
+   - **Без `catalog → pricing`**: Admin не импортирует `PricingService`
+     и ничего не пересчитывает — он запрещает мутацию.
+
+2. **Тесты** — `apps/catalog/tests/test_admin_product_bounds.py` (13 тестов):
+   - конфигурация: readonly + отсутствие полей в форме change/add +
+     рендер страницы без input-ов;
+   - серверный отказ: `min_price`, `max_price`, очистка в NULL, add-путь;
+     безопасные поля (`name`, `description`) по-прежнему сохраняются;
+   - e2e: сфабрикованный POST формы изменения с `min_price`/`max_price`
+     в payload — товар сохраняется, границы не меняются;
+   - легитимный путь не сломан: `PricingService.set_price()` и
+     `recalculate_product_bounds()` по-прежнему обновляют границы.
+
+3. **Документация** — `ARCHITECTURE.md`: раздел «Admin (ARCH-001 Stage 2)»
+   дополнен таблицей Admin-поверхностей и описанием двух слоёв защиты;
+   в «Testing Strategy» добавлены Admin-guard тесты.
+
+### Проверка
+- `manage.py test` (PostgreSQL): **1048 tests, 0 failures**.
+- Проверка осмысленности тестов: при снятии `readonly_fields` падают
+  5 тестов конфигурации, при отключении `save_model` — 4 теста
+  серверного отказа. Оба слоя реально отслеживаются.
+
+### Out of scope (согласно issue)
+`rating` / `reviews_count` / `views_count` в Admin, политика raw ORM/шелл-мутаций,
+seed/инструменты заполнения, Order/EDU-002.

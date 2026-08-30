@@ -6,7 +6,7 @@
 #   - Inline-изображения и варианты (TabularInline)
 #   - Fieldsets для группировки полей
 #   - Цветной статус (emoji + CSS-цвет)
-#   - Диапазон цен (из денормализованных min_price/max_price)
+#   - Диапазон цен (из денормализованных min_price/max_price) — только чтение
 #   - filter_horizontal для M2M (категории, теги) — добавление/удаление
 #
 # АРХИТЕКТУРА:
@@ -14,11 +14,24 @@
 #   ProductVariantInline — редактирование вариантов внутри товара
 #   show_change_link — ссылка на полную страницу варианта
 #
+# ARCH-001 Stage 2 (M1 residual — Product bounds):
+#   Product.min_price / max_price — денормализованные границы цен.
+#   Единственный авторитетный путь их обновления:
+#
+#     PricingService.recalculate_product_bounds(product)
+#       → CatalogService.set_product_prices(product, min_price, max_price)
+#
+#   catalog НЕ импортирует pricing (запрещена обратная зависимость),
+#   поэтому Admin не может пересчитать границы сам — он их только
+#   показывает (readonly_fields) и ЗАПРЕЩАЕТ любую запись отличных
+#   значений (defense-in-depth в save_model).
+#
 # ЧТО БУДЕТ, ЕСЛИ УДАЛИТЬ ФАЙЛ:
 #   В /admin/catalog/product/ — пусто. Товары нельзя создавать/редактировать.
 # ────────────────────────────────────────────────────────────
 
 from django.contrib import admin
+from django.core.exceptions import PermissionDenied
 from django.utils.html import format_html
 
 from apps.catalog.constants import ProductStatus
@@ -27,6 +40,11 @@ from apps.catalog.models import (
     ProductImage,
     ProductVariant,
 )
+
+# ARCH-001 Stage 2 (M1 residual): денормализованные границы цен товара.
+# Писать их имеет право только CatalogService.set_product_prices()
+# (вызывается из PricingService) — Admin только читает.
+PRODUCT_PRICE_BOUNDS_FIELDS = ('min_price', 'max_price')
 
 
 # ────────────────────────────────────────────────────────────
@@ -130,6 +148,10 @@ class ProductAdmin(admin.ModelAdmin):
         'created_at',
         'updated_at',
         'published_at',
+        # ARCH-001 Stage 2 (M1): границы цен — только чтение.
+        # Источник истины — PricingService → CatalogService.set_product_prices.
+        'min_price',
+        'max_price',
     )
 
     ordering = ('-created_at',)
@@ -164,7 +186,11 @@ class ProductAdmin(admin.ModelAdmin):
             ),
         }),
         ('Цены (авто)', {
-            'description': 'Пересчитываются автоматически из вариантов.',
+            'description': (
+                'Только чтение. Пересчитываются PricingService → '
+                'CatalogService.set_product_prices(). '
+                'Ручное изменение через Admin запрещено (ARCH-001 Stage 2).'
+            ),
             'fields': (
                 'min_price',
                 'max_price',
@@ -192,6 +218,53 @@ class ProductAdmin(admin.ModelAdmin):
             ),
         }),
     )
+
+    # ----------------------------------------------------------
+    # ARCH-001 Stage 2 (M1): защита границ цен (defense-in-depth)
+    # ----------------------------------------------------------
+
+    def save_model(self, request, obj, form, change):
+        """Refuse persisting changed price bounds even if the form is forced.
+
+        ``readonly_fields`` already removes ``min_price`` / ``max_price``
+        from the generated ModelForm, so a normal Admin POST cannot reach
+        them. This override is the second layer: a crafted POST, a direct
+        ``save_model()`` call, or a future edit of ``readonly_fields``
+        still cannot write bounds that differ from the stored ones.
+
+        The authoritative writer stays
+        ``PricingService.recalculate_product_bounds()`` →
+        ``CatalogService.set_product_prices()``. Catalog Admin must not
+        import PricingService (no ``catalog → pricing`` dependency), so it
+        forbids the mutation instead of recalculating it.
+        """
+        if change and obj.pk:
+            previous = (
+                Product.objects.filter(pk=obj.pk)
+                .values_list('min_price', 'max_price')
+                .first()
+            )
+            if previous is not None:
+                previous_min, previous_max = previous
+                if (
+                    obj.min_price != previous_min
+                    or obj.max_price != previous_max
+                ):
+                    raise PermissionDenied(
+                        'Изменение Product.min_price / max_price через Admin '
+                        'запрещено (ARCH-001 Stage 2). Границы цен '
+                        'пересчитываются только PricingService → '
+                        'CatalogService.set_product_prices().'
+                    )
+        elif obj.min_price is not None or obj.max_price is not None:
+            # Add path: a new Product must start with empty bounds.
+            raise PermissionDenied(
+                'Задание Product.min_price / max_price через Admin запрещено '
+                '(ARCH-001 Stage 2). Границы цен пересчитываются только '
+                'PricingService → CatalogService.set_product_prices().'
+            )
+
+        super().save_model(request, obj, form, change)
 
     # ----------------------------------------------------------
     # Custom columns
