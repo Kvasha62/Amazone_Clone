@@ -351,7 +351,8 @@ class Product(BaseModel):
     # Эти поля обновляются ТОЛЬКО через авторитетные пути:
     #   • rating / reviews_count — CatalogService.set_review_stats()
     #     (ARCH-001 C1: вызывается из ReviewService; на сервисном
-    #     уровне прямой мутации нет; Admin-поверхность — residual H3).
+    #     уровне прямой мутации нет; ARCH-001 H2 закрывает
+    #     ProductAdmin/ReviewAdmin обходы на Admin-поверхности).
     #     ARCH-001 H1: перед расчётом агрегатов ReviewService берёт
     #     row lock ЭТОЙ строки (SELECT ... FOR UPDATE) под
     #     transaction.atomic вызывающего метода — конкурентные

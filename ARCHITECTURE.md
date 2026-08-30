@@ -266,8 +266,9 @@ The authoritative service-level write path for `rating` and
 knowledge) and writes them via `CatalogService.set_review_stats()` —
 `reviews → catalog`, and `catalog` never reads `reviews`. Review
 signals are logging-only and mutate nothing. The Django Admin product
-form can still edit these fields directly; that surface is
-intentionally out of C1 scope (Admin hardening follow-up H3).
+form displays these fields as read-only and `ProductAdmin.save_model()`
+rejects changed in-memory values (ARCH-001 H2); this is an Admin-surface
+guard, not database-level enforcement.
 
 `min_price` / `max_price` are updated exclusively through the explicit
 cross-domain service contract (ARCH-001 Stage 2): `pricing` computes
@@ -742,9 +743,10 @@ ReviewService.recalculate_product_rating()
 the write: `CatalogService.set_review_stats()` is the authoritative
 service-level writer of `Product.rating` / `Product.reviews_count`
 (the legacy `Product.update_rating()` path is removed). Signals are
-not used for this mutation. The Django Admin product form remains a
-separate surface that can still edit these fields; Admin hardening
-is a separate follow-up (H3), intentionally not part of C1.
+not used for this mutation. ARCH-001 H2 hardens Django Admin surfaces
+so ProductAdmin does not persist submitted review-aggregate values, and
+ReviewAdmin routes aggregate-affecting review operations through the
+existing ReviewService path where such a path exists.
 
 **Concurrency (ARCH-001 H1).** Every authoritative review-aggregate
 path — `ReviewService.create_review()`, `update_review()`,
@@ -788,6 +790,34 @@ concurrent create/create, create/delete, approve/approve and
 approve/reject, update/update, a mixed all-paths stress run, plus a
 lock-blocking test and the post-run invariant
 `reviews_count == COUNT(approved)`, `rating == ROUND(AVG(approved))`).
+
+**Admin (ARCH-001 H2).** Django Admin is not an aggregate-calculation
+layer and must not create another writer for `Product.rating` /
+`Product.reviews_count`. The Admin hardening is limited to the Admin
+surface; raw ORM/shell updates are still outside this guard.
+
+| Admin surface | Aggregate risk | H2 behavior |
+|---------------|----------------|-------------|
+| `ProductAdmin` | Direct form/save write of `rating` / `reviews_count` | fields are rendered read-only and omitted from the generated ModelForm; `save_model()` raises `PermissionDenied` if an in-memory product would persist changed values |
+| `ReviewAdmin` add/change | Creating a review, changing `rating`, or changing `is_approved` changes the approved-review AVG/COUNT | add uses `ReviewService.create_review()`; rating/text/title edits use `ReviewService.update_review()`; approval changes use `ReviewService.approve_review()` / `reject_review()` |
+| `ReviewAdmin` change | Moving an existing review to another product would require recalculating both old and new products | `user` / `product` are read-only on existing reviews, and `save_model()` rejects forced changes because no existing service-level move operation is defined |
+| `ReviewAdmin` delete / bulk delete | Removing approved reviews changes AVG/COUNT | `delete_model()` / `delete_queryset()` route each row through `ReviewService.delete_review()` |
+| `ReviewAdmin` approve/reject actions | Bulk moderation changes which reviews are counted | existing actions continue to call `ReviewService.approve_review()` / `reject_review()` per row |
+
+This preserves the C1/H1 chain:
+
+```text
+ReviewService
+  → recalculate_product_rating()  # owns AVG/COUNT over approved Review rows
+  → CatalogService.set_review_stats()  # catalog-owned Product field write
+  → Product.rating / Product.reviews_count
+```
+
+ProductAdmin does not import reviews code to recalculate aggregates; it
+rejects direct aggregate writes. ReviewAdmin stays in the reviews context
+and delegates aggregate-affecting operations to the existing ReviewService
+entrypoints rather than writing `Product` fields or calling
+`CatalogService.set_review_stats()` itself.
 
 This is the **primary** mechanism for cross-domain coordination.
 
@@ -1067,12 +1097,16 @@ src/api/
 - Throttling disabled in tests
 - SQLite by default; PostgreSQL required for FTS and `select_for_update`
 - Admin guard tests: `apps/catalog/tests/test_admin_variant_guards.py`
-  (variant `is_active` / delete) and
+  (variant `is_active` / delete),
   `apps/catalog/tests/test_admin_product_bounds.py` (`Product.min_price`
-  / `max_price` read-only + server-side rejection). Each guard is
-  covered twice — the Admin configuration (read-only / no form input)
-  and the server-side rejection (`PermissionDenied`, stored state
-  unchanged) — so removing either layer fails the suite.
+  / `max_price` read-only + server-side rejection),
+  `apps/catalog/tests/test_admin_product_review_stats.py`
+  (`Product.rating` / `reviews_count` read-only + server-side rejection),
+  and `apps/reviews/tests/test_admin_review_aggregates.py`
+  (ReviewAdmin add/change/delete/action paths preserve review aggregates
+  through ReviewService). ProductAdmin aggregate guards are covered by
+  Admin configuration/form tests and forced-save tests so removing either
+  layer fails the suite.
 
 > Test count as of last measurement: ~950 tests, 0 failures, 2 skipped
 > (PostgreSQL-only). A full PostgreSQL run after Issue #19 measured

@@ -26,9 +26,16 @@
 #   показывает (readonly_fields) и ЗАПРЕЩАЕТ любую запись отличных
 #   значений (defense-in-depth в save_model).
 #
+# ARCH-001 H2 (review aggregates):
+#   Product.rating / reviews_count — денормализованные агрегаты отзывов.
+#   ProductAdmin показывает их как readonly и запрещает forced save;
+#   пересчёт остаётся за ReviewService → CatalogService.set_review_stats().
+#
 # ЧТО БУДЕТ, ЕСЛИ УДАЛИТЬ ФАЙЛ:
 #   В /admin/catalog/product/ — пусто. Товары нельзя создавать/редактировать.
 # ────────────────────────────────────────────────────────────
+
+from decimal import Decimal
 
 from django.contrib import admin
 from django.core.exceptions import PermissionDenied
@@ -45,6 +52,20 @@ from apps.catalog.models import (
 # Писать их имеет право только CatalogService.set_product_prices()
 # (вызывается из PricingService) — Admin только читает.
 PRODUCT_PRICE_BOUNDS_FIELDS = ('min_price', 'max_price')
+
+# ARCH-001 H2: review-derived aggregate fields. CatalogService.set_review_stats()
+# is the catalog-owned service-level write path; ProductAdmin may display these
+# values but must not persist arbitrary Admin-supplied values.
+PRODUCT_REVIEW_AGGREGATE_FIELDS = ('rating', 'reviews_count')
+
+PRODUCT_ADMIN_PROTECTED_FIELDS = (
+    *PRODUCT_PRICE_BOUNDS_FIELDS,
+    *PRODUCT_REVIEW_AGGREGATE_FIELDS,
+)
+PRODUCT_REVIEW_AGGREGATE_DEFAULTS = {
+    'rating': Decimal('0.00'),
+    'reviews_count': 0,
+}
 
 
 # ────────────────────────────────────────────────────────────
@@ -152,6 +173,10 @@ class ProductAdmin(admin.ModelAdmin):
         # Источник истины — PricingService → CatalogService.set_product_prices.
         'min_price',
         'max_price',
+        # ARCH-001 H2: review-derived aggregates — только чтение.
+        # Источник истины: ReviewService → CatalogService.set_review_stats.
+        'rating',
+        'reviews_count',
     )
 
     ordering = ('-created_at',)
@@ -196,7 +221,13 @@ class ProductAdmin(admin.ModelAdmin):
                 'max_price',
             ),
         }),
-        ('Рейтинг', {
+        ('Рейтинг / отзывы', {
+            'description': (
+                'rating и reviews_count — только чтение: рассчитываются '
+                'ReviewService по одобренным отзывам и записываются через '
+                'CatalogService.set_review_stats() (ARCH-001 H2). '
+                'views_count не относится к review-агрегатам H2.'
+            ),
             'fields': (
                 'rating',
                 'reviews_count',
@@ -220,48 +251,55 @@ class ProductAdmin(admin.ModelAdmin):
     )
 
     # ----------------------------------------------------------
-    # ARCH-001 Stage 2 (M1): защита границ цен (defense-in-depth)
+    # ARCH-001 Stage 2 / H2: защита денормализованных агрегатов
     # ----------------------------------------------------------
 
     def save_model(self, request, obj, form, change):
-        """Refuse persisting changed price bounds even if the form is forced.
+        """Refuse persisting protected aggregate fields from ProductAdmin.
 
-        ``readonly_fields`` already removes ``min_price`` / ``max_price``
-        from the generated ModelForm, so a normal Admin POST cannot reach
-        them. This override is the second layer: a crafted POST, a direct
-        ``save_model()`` call, or a future edit of ``readonly_fields``
-        still cannot write bounds that differ from the stored ones.
+        ``readonly_fields`` removes the protected fields from generated
+        ModelForms, so a normal Admin POST cannot bind them. This override is
+        the second layer: a crafted POST, a direct ``save_model()`` call, or a
+        future edit of ``readonly_fields`` still cannot persist arbitrary
+        aggregate values.
 
-        The authoritative writer stays
-        ``PricingService.recalculate_product_bounds()`` →
-        ``CatalogService.set_product_prices()``. Catalog Admin must not
-        import PricingService (no ``catalog → pricing`` dependency), so it
-        forbids the mutation instead of recalculating it.
+        Legitimate service-level paths stay outside Admin orchestration:
+        ``PricingService`` → ``CatalogService.set_product_prices()`` for price
+        bounds and ``ReviewService`` → ``CatalogService.set_review_stats()``
+        for review aggregates. ProductAdmin forbids the mutations instead of
+        importing pricing/reviews services.
         """
         if change and obj.pk:
             previous = (
                 Product.objects.filter(pk=obj.pk)
-                .values_list('min_price', 'max_price')
+                .values(*PRODUCT_ADMIN_PROTECTED_FIELDS)
                 .first()
             )
             if previous is not None:
-                previous_min, previous_max = previous
-                if (
-                    obj.min_price != previous_min
-                    or obj.max_price != previous_max
-                ):
+                changed_fields = [
+                    field
+                    for field in PRODUCT_ADMIN_PROTECTED_FIELDS
+                    if getattr(obj, field) != previous[field]
+                ]
+                if changed_fields:
                     raise PermissionDenied(
-                        'Изменение Product.min_price / max_price через Admin '
-                        'запрещено (ARCH-001 Stage 2). Границы цен '
-                        'пересчитываются только PricingService → '
-                        'CatalogService.set_product_prices().'
+                        'Изменение защищённых Product aggregate fields через '
+                        f'Admin запрещено (ARCH-001): {changed_fields}. '
+                        'Используйте соответствующие service-level пути.'
                     )
-        elif obj.min_price is not None or obj.max_price is not None:
-            # Add path: a new Product must start with empty bounds.
+        elif (
+            obj.min_price is not None
+            or obj.max_price is not None
+            or any(
+                getattr(obj, field) != default
+                for field, default in PRODUCT_REVIEW_AGGREGATE_DEFAULTS.items()
+            )
+        ):
+            # Add path: a new Product must start with empty derived values.
             raise PermissionDenied(
-                'Задание Product.min_price / max_price через Admin запрещено '
-                '(ARCH-001 Stage 2). Границы цен пересчитываются только '
-                'PricingService → CatalogService.set_product_prices().'
+                'Задание Product aggregate fields через Admin запрещено '
+                '(ARCH-001). Денормализованные значения публикуются через '
+                'соответствующие service-level пути.'
             )
 
         super().save_model(request, obj, form, change)

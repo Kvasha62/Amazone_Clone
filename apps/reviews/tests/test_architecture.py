@@ -17,9 +17,9 @@
 #   D. Единственный service-level writer агрегатов —
 #      CatalogService.set_review_stats (файловый скан на прямые
 #      присвоения/QuerySet.update в обход контракта).
-#      Скан защищает кодовый путь; декларативные Admin-поверхности
-#      (форма товара) им не покрываются — это residual H3,
-#      hardening вне этапа C1.
+#      Скан защищает сервисный кодовый путь; H2 Admin-поверхности
+#      дополнительно покрыты поведенческими Admin-тестами и
+#      source-guard ниже.
 #
 # Методика (как в apps/discounts/tests/test_architecture.py):
 #   • source-inspection (inspect.getsource) для сервисных контрактов;
@@ -37,10 +37,16 @@ from django.test import SimpleTestCase
 
 from rest_framework.exceptions import ValidationError
 
+from apps.catalog.admin import product_admin as product_admin_module
+from apps.catalog.admin.product_admin import (
+    PRODUCT_REVIEW_AGGREGATE_FIELDS,
+    ProductAdmin,
+)
 from apps.catalog.models import Product
 from apps.catalog.services.catalog_service import CatalogService
 from apps.catalog.tests.factories import CatalogTestCase
 from apps.reviews.services.review_service import ReviewService
+from apps.reviews.admin.review_admin import ReviewAdmin
 from apps.reviews import signals as reviews_signals
 
 # Корень репозитория: apps/reviews/tests/test_architecture.py
@@ -252,6 +258,58 @@ class ReviewAggregateContractArchitectureTests(SimpleTestCase):
         self.assertIn('product.reviews_count =', source)
 
 
+class AdminAggregateSurfaceArchitectureTests(SimpleTestCase):
+    """H2. Admin surfaces must not create another aggregate writer."""
+
+    def test_product_admin_review_aggregates_are_readonly_and_guarded(self):
+        self.assertEqual(
+            ('rating', 'reviews_count'),
+            PRODUCT_REVIEW_AGGREGATE_FIELDS,
+        )
+        for field in PRODUCT_REVIEW_AGGREGATE_FIELDS:
+            self.assertIn(field, ProductAdmin.readonly_fields)
+
+        save_source = inspect.getsource(ProductAdmin.save_model)
+        self.assertIn('PRODUCT_ADMIN_PROTECTED_FIELDS', save_source)
+        self.assertIn('PermissionDenied', save_source)
+
+    def test_product_admin_does_not_import_reviews_service(self):
+        source = inspect.getsource(product_admin_module)
+        forbidden_imports = (
+            'from apps.reviews',
+            'import apps.reviews',
+        )
+        for token in forbidden_imports:
+            self.assertNotIn(
+                token,
+                source,
+                'ProductAdmin must not introduce catalog → reviews runtime '
+                'dependency while hardening review aggregates.',
+            )
+
+    def test_review_admin_aggregate_paths_route_through_review_service(self):
+        source = '\n'.join(
+            inspect.getsource(method)
+            for method in (
+                ReviewAdmin.save_model,
+                ReviewAdmin.delete_model,
+                ReviewAdmin.delete_queryset,
+                ReviewAdmin.approve_selected,
+                ReviewAdmin.reject_selected,
+            )
+        )
+        required_tokens = (
+            'ReviewService.create_review',
+            'ReviewService.update_review',
+            'ReviewService.approve_review',
+            'ReviewService.reject_review',
+            'ReviewService.delete_review',
+        )
+        for token in required_tokens:
+            self.assertIn(token, source)
+        self.assertNotIn('CatalogService.set_review_stats', source)
+
+
 class CrossContextDependencyDirectionTests(SimpleTestCase):
     """C. catalog → reviews в production runtime не существует."""
 
@@ -283,9 +341,9 @@ class SingleServiceWriterScanTests(SimpleTestCase):
     """D. Файловый скан: на сервисном уровне агрегаты пишет только catalog.
 
     Сканируется production-код на прямые присвоения/QuerySet.update
-    в обход CatalogService.set_review_stats(). Декларативные
-    Admin-поверхности (например, форма товара) этим сканом не
-    покрываются — известный residual H3, hardening вне этапа C1.
+    в обход CatalogService.set_review_stats(). H2 Admin-поверхности
+    защищаются отдельными поведенческими Admin-тестами; этот скан
+    остаётся guard'ом service/runtime-кода.
     """
 
     # Разрешённый авторитетный service-level writer (путь от корня репо).
