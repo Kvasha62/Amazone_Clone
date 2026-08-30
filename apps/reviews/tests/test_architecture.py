@@ -14,9 +14,12 @@
 #   B. ReviewService использует catalog-контракт, а не прямую
 #      мутацию / прежний Product.update_rating().
 #   C. Зависимости catalog → reviews в production runtime нет.
-#   D. Единственный production writer агрегатов —
+#   D. Единственный service-level writer агрегатов —
 #      CatalogService.set_review_stats (файловый скан на прямые
 #      присвоения/QuerySet.update в обход контракта).
+#      Скан защищает кодовый путь; декларативные Admin-поверхности
+#      (форма товара) им не покрываются — это residual H3,
+#      hardening вне этапа C1.
 #
 # Методика (как в apps/discounts/tests/test_architecture.py):
 #   • source-inspection (inspect.getsource) для сервисных контрактов;
@@ -96,6 +99,46 @@ class CatalogSetReviewStatsTests(CatalogTestCase):
                 self.product.refresh_from_db()
                 self.assertEqual(self.product.rating, Decimal('0.00'))
                 self.assertEqual(self.product.reviews_count, 0)
+
+    def test_set_review_stats_rejects_non_finite_decimal_values(self):
+        """NaN / ±Infinity и непредставимые порядки величины.
+
+        Публичный контракт обязан отвечать предусмотренным
+        ValidationError, а не протекать decimal.InvalidOperation
+        (сравнение с NaN / quantize бесконечности падают в decimal).
+        """
+        special_values = (
+            Decimal('NaN'),
+            Decimal('sNaN'),
+            Decimal('Infinity'),
+            Decimal('-Infinity'),
+            # Конечное, но непредставимое в numeric(3,2) значение.
+            Decimal('1E+30'),
+        )
+        for bad_rating in special_values:
+            with self.subTest(rating=bad_rating):
+                with self.assertRaises(ValidationError):
+                    CatalogService.set_review_stats(
+                        self.product,
+                        rating=bad_rating,
+                        reviews_count=1,
+                    )
+
+                self.product.refresh_from_db()
+                self.assertEqual(self.product.rating, Decimal('0.00'))
+                self.assertEqual(self.product.reviews_count, 0)
+
+    def test_set_review_stats_quantizes_to_two_decimal_places(self):
+        """Обычное значение нормализуется до 2 знаков: 4.567 → 4.57."""
+        CatalogService.set_review_stats(
+            self.product,
+            rating=Decimal('4.567'),
+            reviews_count=3,
+        )
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.rating, Decimal('4.57'))
+        self.assertEqual(self.product.reviews_count, 3)
 
     def test_set_review_stats_rejects_negative_reviews_count(self):
         with self.assertRaises(ValidationError):
@@ -199,10 +242,16 @@ class CrossContextDependencyDirectionTests(SimpleTestCase):
             self.assertNotIn(token, source, token)
 
 
-class SingleProductionWriterScanTests(SimpleTestCase):
-    """D. Файловый скан: записывать агрегаты может только CatalogService."""
+class SingleServiceWriterScanTests(SimpleTestCase):
+    """D. Файловый скан: на сервисном уровне агрегаты пишет только catalog.
 
-    # Разрешённый авторитетный writer (относительный путь от корня репо).
+    Сканируется production-код на прямые присвоения/QuerySet.update
+    в обход CatalogService.set_review_stats(). Декларативные
+    Admin-поверхности (например, форма товара) этим сканом не
+    покрываются — известный residual H3, hardening вне этапа C1.
+    """
+
+    # Разрешённый авторитетный service-level writer (путь от корня репо).
     AUTHORITATIVE_WRITER = os.path.join(
         'apps', 'catalog', 'services', 'catalog_service.py',
     )
@@ -216,7 +265,7 @@ class SingleProductionWriterScanTests(SimpleTestCase):
         re.compile(r'\.update\(\s*[^)]*\breviews_count\s*='),
     )
 
-    def test_no_second_production_writer_for_review_aggregates(self):
+    def test_no_second_service_level_writer_for_review_aggregates(self):
         apps_dir = os.path.join(_REPO_ROOT, 'apps')
         offenders = []
 

@@ -350,7 +350,8 @@ class Product(BaseModel):
     # ==================================================================
     # Эти поля обновляются ТОЛЬКО через авторитетные пути:
     #   • rating / reviews_count — CatalogService.set_review_stats()
-    #     (ARCH-001 C1: вызывается из ReviewService; прямой мутации нет);
+    #     (ARCH-001 C1: вызывается из ReviewService; на сервисном
+    #     уровне прямой мутации нет; Admin-поверхность — residual H3);
     #   • views_count — атомарный increment_views() или celery-задачи.
     #
     # Почему денормализация:
@@ -599,7 +600,7 @@ class Product(BaseModel):
     # cross-context mutation path: reviews вызывал метод catalog-модели
     # и сам решал, когда мутировать агрегаты каталога.
     #
-    # Авторитетный путь записи теперь один:
+    # Авторитетный service-level путь записи теперь один:
     #   ReviewService.recalculate_product_rating()
     #     → расчёт AVG/COUNT из данных reviews
     #     → CatalogService.set_review_stats(product, rating, reviews_count)

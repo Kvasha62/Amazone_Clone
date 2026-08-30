@@ -259,13 +259,15 @@ aggregates to avoid expensive JOINs on every listing request:
 | `reviews_count`  | `COUNT(review)`                       | Display count without JOIN         |
 | `views_count`    | `COUNT(product_view)`                 | Popularity sort without JOIN       |
 
-`rating` and `reviews_count` are updated exclusively through the
-explicit cross-domain service contract (ARCH-001 Stage C1): `reviews`
-computes the aggregates (`AVG`/`COUNT` over approved `Review` rows —
-its own domain knowledge) and writes them via
-`CatalogService.set_review_stats()` — `reviews → catalog`, and
-`catalog` never reads `reviews`. Review signals are logging-only and
-mutate nothing.
+The authoritative service-level write path for `rating` and
+`reviews_count` is the explicit cross-domain service contract
+(ARCH-001 Stage C1): `reviews` computes the aggregates
+(`AVG`/`COUNT` over approved `Review` rows — its own domain
+knowledge) and writes them via `CatalogService.set_review_stats()` —
+`reviews → catalog`, and `catalog` never reads `reviews`. Review
+signals are logging-only and mutate nothing. The Django Admin product
+form can still edit these fields directly; that surface is
+intentionally out of C1 scope (Admin hardening follow-up H3).
 
 `min_price` / `max_price` are updated exclusively through the explicit
 cross-domain service contract (ARCH-001 Stage 2): `pricing` computes
@@ -467,7 +469,8 @@ without user authentication) and requires HMAC-SHA256 verification via the
 - `reviews` owns `Review` and calculates review aggregates
   (`AVG`/`COUNT` over approved reviews)
 - `catalog` owns `Product.rating` / `Product.reviews_count` and their
-  authoritative mutation: `ReviewService.recalculate_product_rating()`
+  authoritative service-level write path:
+  `ReviewService.recalculate_product_rating()`
   → `CatalogService.set_review_stats()` (ARCH-001 Stage C1;
   see [Cross-Domain Coordination](#cross-domain-coordination))
 
@@ -734,10 +737,12 @@ ReviewService.recalculate_product_rating()
 ```
 
 `reviews` owns the calculation (its domain knowledge), `catalog` owns
-the write: `CatalogService.set_review_stats()` is the only production
-writer of `Product.rating` / `Product.reviews_count` (the legacy
-`Product.update_rating()` path is removed). Signals are not used for
-this mutation.
+the write: `CatalogService.set_review_stats()` is the authoritative
+service-level writer of `Product.rating` / `Product.reviews_count`
+(the legacy `Product.update_rating()` path is removed). Signals are
+not used for this mutation. The Django Admin product form remains a
+separate surface that can still edit these fields; Admin hardening
+is a separate follow-up (H3), intentionally not part of C1.
 
 This is the **primary** mechanism for cross-domain coordination.
 

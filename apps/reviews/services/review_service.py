@@ -218,9 +218,11 @@ class ReviewService:
 
           • `reviews` владеет ЗНАНИЕМ: как считать агрегаты отзывов
             (AVG/COUNT по одобренным Review — это его domain data).
-          • `catalog` владеет ЗАПИСЬЮ: Product.rating и
-            Product.reviews_count мутируются ТОЛЬКО через
-            catalog-owned контракт CatalogService.set_review_stats().
+          • `catalog` владеет ЗАПИСЬЮ: на сервисном уровне
+            Product.rating и Product.reviews_count мутируются ТОЛЬКО
+            через catalog-owned контракт CatalogService.set_review_stats()
+            (авторитетный service-level путь; Admin-поверхность товара
+            — отдельный residual H3, вне этапа C1).
 
         Цепочка:
           ReviewService.recalculate_product_rating()
