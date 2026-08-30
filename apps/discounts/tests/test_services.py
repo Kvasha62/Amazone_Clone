@@ -192,6 +192,46 @@ class CancelCouponTests(TestCase):
         self.assertEqual(coupon.times_used, 0)
         self.assertFalse(CouponUsage.objects.filter(order=order).exists())
 
+    def test_transition_status_cancelled_rejects_and_keeps_coupon_slot(self):
+        """EDU-002 B1 regression: transition_status(CANCELLED) must not
+        cancel the order or leave/alter coupon usage.
+
+        Before the fix this path cancelled the order without
+        DiscountService.release_usage(), leaking the coupon slot.
+        Now CANCELLED is rejected entirely; cancel() is the only entrypoint.
+        """
+        user = create_test_user()
+        order = create_test_order(
+            user,
+            subtotal=Decimal('1000.00'),
+            total=Decimal('1000.00'),
+        )
+        coupon = create_test_coupon(code='BYPASS', discount_value=Decimal('10'))
+        OrderService.apply_coupon(order, 'BYPASS', user=user)
+        coupon.refresh_from_db()
+        self.assertEqual(coupon.times_used, 1)
+        self.assertTrue(CouponUsage.objects.filter(order=order).exists())
+
+        with self.assertRaises(ValidationError):
+            OrderService.transition_status(order, OrderStatus.CANCELLED, user=user)
+
+        order.refresh_from_db()
+        coupon.refresh_from_db()
+        self.assertEqual(order.status, OrderStatus.PENDING)
+        self.assertEqual(order.discount, Decimal('100.00'))
+        self.assertEqual(order.total, Decimal('900.00'))
+        self.assertEqual(coupon.times_used, 1)
+        self.assertTrue(CouponUsage.objects.filter(order=order).exists())
+
+        # Legitimate cancellation still releases the slot.
+        order = OrderService.cancel(order, user=user)
+        coupon.refresh_from_db()
+        self.assertEqual(order.status, OrderStatus.CANCELLED)
+        self.assertEqual(order.discount, Decimal('0.00'))
+        self.assertEqual(order.total, Decimal('1000.00'))
+        self.assertEqual(coupon.times_used, 0)
+        self.assertFalse(CouponUsage.objects.filter(order=order).exists())
+
     # ARCH-002 (п.4): release купонного слота — ТОЛЬКО при переходе
     # PENDING → CANCELLED. Отмена уже подтверждённого/собираемого/
     # отправленного заказа НЕ освобождает слот и не трогает

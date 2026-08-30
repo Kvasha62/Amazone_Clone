@@ -233,7 +233,25 @@ class OrderService:
         *,
         user=None,
     ) -> Order:
-        """Transition an order through its finite state machine."""
+        """Transition an order through its finite state machine.
+
+        ``CANCELLED`` is not accepted here. Cancellation is a dedicated
+        domain operation owned by ``cancel()`` (coupon release, inventory,
+        payment refund). Callers that need to cancel must use
+        ``OrderService.cancel()`` so coupon coordination cannot be bypassed.
+        """
+        # EDU-002 / ARCH-001 stage 3: single cancellation entrypoint.
+        # Reject before locking so accidental callers fail fast and cannot
+        # leave CouponUsage / times_used inconsistent with Order status.
+        if new_status == OrderStatus.CANCELLED:
+            raise ValidationError({
+                'detail': (
+                    'Отмена заказа выполняется только через '
+                    'OrderService.cancel(). transition_status() не принимает '
+                    'статус CANCELLED.'
+                ),
+            })
+
         order = Order.objects.select_for_update().get(pk=order.pk)
         current_status = order.status
 
@@ -250,7 +268,7 @@ class OrderService:
             raise ValidationError({
                 'detail': (
                     f'Переход «{current_status} → {new_status}» недопустим. '
-                    f'Допустимые: {[s for s in allowed]}'
+                    f'Допустимые: {[s for s in allowed if s != OrderStatus.CANCELLED]}'
                 ),
             })
 
@@ -260,8 +278,6 @@ class OrderService:
             order.confirmed_at = now
         elif new_status == OrderStatus.DELIVERED:
             order.delivered_at = now
-        elif new_status == OrderStatus.CANCELLED:
-            order.cancelled_at = now
 
         order.save(update_fields=[
             'status',

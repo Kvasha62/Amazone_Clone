@@ -702,6 +702,13 @@ OrderService.cancel()
   → PaymentService.refund_payment(payment, ...)
 ```
 
+**Cancellation entrypoint (EDU-002).** `CANCELLED` is reached only through
+`OrderService.cancel()`. `transition_status()` rejects `CANCELLED` so it
+cannot bypass coupon release, inventory, or payment refund orchestration.
+Staff `PATCH /api/v1/orders/{order_number}/status/` with
+`{"status": "cancelled"}` routes to `cancel()`; other status values still
+use `transition_status()`.
+
 Coupon coordination (`apply_coupon` / `remove_coupon` / `cancel`) follows the
 same pattern: `OrderService` owns the transaction and locks
 (`Order → Coupon → CouponUsage`), while `DiscountService` mutates only

@@ -85,13 +85,19 @@ class OrderServiceTransitionTests(TestCase):
         self.assertEqual(order.status, OrderStatus.CONFIRMED)
         self.assertIsNotNone(order.confirmed_at)
 
-    def test_pending_to_cancelled(self):
-        """PENDING → CANCELLED — допустимый переход."""
-        order = OrderService.transition_status(
-            self.order, OrderStatus.CANCELLED,
-        )
-        self.assertEqual(order.status, OrderStatus.CANCELLED)
-        self.assertIsNotNone(order.cancelled_at)
+    def test_transition_status_rejects_cancelled(self):
+        """EDU-002: CANCELLED is not accepted via transition_status().
+
+        Cancellation is owned exclusively by cancel() so coupon release
+        (and payment refund) cannot be bypassed.
+        """
+        with self.assertRaises(ValidationError) as ctx:
+            OrderService.transition_status(
+                self.order, OrderStatus.CANCELLED,
+            )
+        self.assertIn('cancel()', str(ctx.exception.detail))
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, OrderStatus.PENDING)
 
     def test_invalid_transition_raises_error(self):
         """PENDING → DELIVERED — недопустимый переход → ValidationError."""
