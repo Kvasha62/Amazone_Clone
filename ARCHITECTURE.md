@@ -771,14 +771,31 @@ no global listener registry / event bus). Any such mechanism would
 hide the cross-domain call path that this document requires to be
 explicit.
 
-**Admin (ARCH-001 Stage 2).** Django Admin for `ProductVariant` (and
-the variant inline on `Product`) must not mutate price-relevant state
-in a way that bypasses `PricingService`. Catalog Admin therefore
-forbids changing `is_active` and deleting variants (including bulk
-delete). Calling `PricingService` from catalog Admin would introduce
-`catalog → pricing`, which is forbidden. Safe non-price fields may
-still be edited. Raw ORM / shell mutations of `is_active` remain an
-accepted trade-off of the one-way architecture and leave
+**Admin (ARCH-001 Stage 2).** Django Admin must not mutate
+price-relevant state in a way that bypasses `PricingService`. Calling
+`PricingService` from catalog Admin would introduce
+`catalog → pricing`, which is forbidden. Catalog Admin therefore
+forbids those mutations; safe non-price fields may still be edited.
+
+| Admin surface                | Forbidden mutation                                   | Legitimate path                                                    |
+|------------------------------|------------------------------------------------------|--------------------------------------------------------------------|
+| `ProductVariantAdmin`        | `is_active` change, single delete, bulk delete        | `PricingService.set_variant_active()` / `delete_variant()`          |
+| `ProductVariantInline`       | `is_active` change, delete                            | same as above                                                      |
+| `ProductAdmin`               | `min_price` / `max_price` change (Issue #19)          | `PricingService.recalculate_product_bounds()` → `CatalogService.set_product_prices()` |
+
+`Product.min_price` / `max_price` are rendered read-only
+(`readonly_fields`, so the generated ModelForm has no inputs for them)
+**and** `ProductAdmin.save_model()` raises `PermissionDenied` when the
+in-memory bounds differ from the stored ones — on `change` (modified
+value, including clearing to `NULL`) and on `add` (a new `Product`
+must start with empty bounds). The second layer is defense-in-depth:
+a crafted Admin POST, a direct `save_model()` call, or a future edit
+of `readonly_fields` still cannot persist arbitrary bounds. Safe
+`Product` fields (name, description, status, M2M, …) remain editable
+and saving them does not touch the bounds.
+
+Raw ORM / shell mutations of `is_active` and of the bounds remain an
+accepted trade-off of the one-way architecture; raw ORM writes leave
 `min_price`/`max_price` stale until the next pricing operation.
 
 ### Role of Django Signals
@@ -975,9 +992,17 @@ src/api/
   `unittest.discover()` issues with nested `tests/` packages
 - Throttling disabled in tests
 - SQLite by default; PostgreSQL required for FTS and `select_for_update`
+- Admin guard tests: `apps/catalog/tests/test_admin_variant_guards.py`
+  (variant `is_active` / delete) and
+  `apps/catalog/tests/test_admin_product_bounds.py` (`Product.min_price`
+  / `max_price` read-only + server-side rejection). Each guard is
+  covered twice — the Admin configuration (read-only / no form input)
+  and the server-side rejection (`PermissionDenied`, stored state
+  unchanged) — so removing either layer fails the suite.
 
 > Test count as of last measurement: ~950 tests, 0 failures, 2 skipped
-> (PostgreSQL-only). This number will change as tests are added or
+> (PostgreSQL-only). A full PostgreSQL run after Issue #19 measured
+> 1048 tests, 0 failures. This number will change as tests are added or
 > refactored.
 
 ### Per-App Test Structure
