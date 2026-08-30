@@ -348,8 +348,10 @@ class Product(BaseModel):
     # ==================================================================
     # Денормализованные счётчики
     # ==================================================================
-    # Эти поля обновляются ТОЛЬКО через атомарные методы
-    # (increment_views, update_rating) или celery-задачи.
+    # Эти поля обновляются ТОЛЬКО через авторитетные пути:
+    #   • rating / reviews_count — CatalogService.set_review_stats()
+    #     (ARCH-001 C1: вызывается из ReviewService; прямой мутации нет);
+    #   • views_count — атомарный increment_views() или celery-задачи.
     #
     # Почему денормализация:
     #   AVG(rating) FROM reviews WHERE product=X — GROUP BY на миллионах.
@@ -593,12 +595,19 @@ class Product(BaseModel):
         # чтобы следующий код видел актуальное значение.
         self.refresh_from_db(fields=['views_count'])
 
-    def update_rating(self, new_rating: Decimal, total_reviews: int) -> None:
-        """Пересчитывает рейтинг из сервиса отзывов."""
-        self.rating = new_rating
-        self.reviews_count = total_reviews
-        self.save(update_fields=['rating', 'reviews_count', 'updated_at'])
-
+    # ARCH-001 Stage C1: Product.update_rating() удалён — это был
+    # cross-context mutation path: reviews вызывал метод catalog-модели
+    # и сам решал, когда мутировать агрегаты каталога.
+    #
+    # Авторитетный путь записи теперь один:
+    #   ReviewService.recalculate_product_rating()
+    #     → расчёт AVG/COUNT из данных reviews
+    #     → CatalogService.set_review_stats(product, rating, reviews_count)
+    #     → catalog.Product
+    #
+    # `reviews` владеет знанием о расчёте агрегатов отзывов,
+    # `catalog` — записью собственных полей (ownership boundary).
+    #
     # ARCH-001 Stage 2: Product.recalculate_prices() удалён — он читал
     # цены pricing через ORM-lookup по вариантам (JOIN на таблицу цен
     # pricing — запрещённая обратная зависимость catalog → pricing).

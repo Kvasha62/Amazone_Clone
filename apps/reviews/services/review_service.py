@@ -7,7 +7,10 @@
 #   delete_review()    — удалить отзыв
 #   approve_review()   — модерация: одобрить
 #   reject_review()    — модерация: отклонить
-#   recalculate_product_rating() — обновить Product.rating
+#   recalculate_product_rating() — рассчитать агрегаты отзывов и
+#                                  записать их через catalog-owned
+#                                  контракт CatalogService.set_review_stats()
+#                                  (ARCH-001 C1: reviews считает, catalog пишет)
 # ────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
@@ -209,18 +212,35 @@ class ReviewService:
     @staticmethod
     def recalculate_product_rating(product) -> None:
         """
-        Пересчитывает Product.rating и Product.reviews_count
-        на основе ВСЕХ одобренных отзывов.
+        Пересчитывает агрегаты отзывов и передаёт их в catalog.
+
+        РАЗДЕЛЕНИЕ ОТВЕТСТВЕННОСТИ (ARCH-001 Stage C1):
+
+          • `reviews` владеет ЗНАНИЕМ: как считать агрегаты отзывов
+            (AVG/COUNT по одобренным Review — это его domain data).
+          • `catalog` владеет ЗАПИСЬЮ: Product.rating и
+            Product.reviews_count мутируются ТОЛЬКО через
+            catalog-owned контракт CatalogService.set_review_stats().
+
+        Цепочка:
+          ReviewService.recalculate_product_rating()
+            → агрегаты AVG/COUNT из своих Review
+            → CatalogService.set_review_stats(product, ...)
+            → catalog.Product
+
+        Прямая мутация product.rating/reviews_count из reviews
+        запрещена (ownership boundary ARCH-001(C)) — только контракт.
 
         ВЫЗЫВАЕТСЯ ПРИ:
           • Создании/редактировании/удалении отзыва
           • Модерации (approve/reject)
-
-        АЛГОРИТМ:
-          1. Aggregate AVG(rating) + COUNT по одобренным отзывам
-          2. Обновить Product.rating и Product.reviews_count
         """
         from decimal import Decimal
+
+        # ARCH-001(C1): ленивый импорт cross-context сервиса (стиль
+        # проекта — см. order_service/shipping_service). Цикла нет:
+        # catalog не импортирует reviews.
+        from apps.catalog.services.catalog_service import CatalogService
 
         stats = Review.objects.filter(
             product=product,
@@ -236,9 +256,12 @@ class ReviewService:
         # Округляем до 2 знаков
         avg = round(Decimal(str(avg)), 2)
 
-        product.update_rating(
-            new_rating=avg,
-            total_reviews=total,
+        # Запись — только через catalog-owned контракт (прямая мутация
+        # полей каталога из reviews запрещена, ARCH-001 C1).
+        CatalogService.set_review_stats(
+            product,
+            rating=avg,
+            reviews_count=total,
         )
 
     # ==============================================================

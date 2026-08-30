@@ -9,8 +9,12 @@
 #   • Модерация: is_approved (False → не виден в каталоге)
 #
 # ДЕНОРМАЛИЗАЦИЯ:
-#   Product.rating и Product.reviews_count автоматически обновляются
-#   через сигнал при создании/удалении/изменении отзыва.
+#   Product.rating и Product.reviews_count обновляются при
+#   создании/удалении/изменении отзыва через явный service-контракт:
+#   ReviewService.recalculate_product_rating()
+#     → CatalogService.set_review_stats()  (ARCH-001 C1:
+#   reviews считает агрегаты, catalog владеет записью своих полей;
+#   сигналы для этой мутации не используются).
 #
 # 📖 https://docs.djangoproject.com/en/stable/ref/models/fields/
 # ────────────────────────────────────────────────────────────────────────
