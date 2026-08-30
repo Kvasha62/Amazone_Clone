@@ -241,6 +241,70 @@ class ProductAdminReviewAggregateGuardTests(TestCase):
         for field in PRODUCT_ADMIN_PROTECTED_FIELDS:
             self.assertNotIn(f'"{field}"', update_sql)
 
+    def test_save_model_change_without_pk_does_not_insert_product(self):
+        """The Admin change path must never degrade into add/full insert."""
+        unsaved_product = Product(
+            name='Unsaved Change Path Product',
+            brand=self.brand,
+            primary_category=self.category,
+            status=ProductStatus.DRAFT,
+        )
+
+        with CaptureQueriesContext(connection) as captured:
+            with self.assertRaises(PermissionDenied):
+                self.admin.save_model(
+                    self.request, unsaved_product, form=None, change=True,
+                )
+
+        product_mutations = [
+            query['sql']
+            for query in captured.captured_queries
+            if (
+                'UPDATE "catalog_product"' in query['sql']
+                or 'INSERT INTO "catalog_product"' in query['sql']
+            )
+        ]
+        self.assertEqual(product_mutations, [])
+        self.assertFalse(
+            Product.objects.filter(name='Unsaved Change Path Product').exists(),
+        )
+
+    def test_save_model_missing_row_does_not_full_save_or_recreate(self):
+        """A stale change form must not resurrect Product with old aggregates."""
+        stale_product = Product.objects.get(pk=self.product.pk)
+        stale_product.name = 'Missing Row ProductAdmin Resurrection'
+        product_id = stale_product.pk
+
+        Product.objects.filter(pk=product_id).delete()
+
+        with CaptureQueriesContext(connection) as captured:
+            with self.assertRaises(PermissionDenied):
+                self.admin.save_model(
+                    self.request, stale_product, form=None, change=True,
+                )
+
+        product_mutations = [
+            query['sql']
+            for query in captured.captured_queries
+            if (
+                'UPDATE "catalog_product"' in query['sql']
+                or 'INSERT INTO "catalog_product"' in query['sql']
+            )
+        ]
+        self.assertEqual(product_mutations, [])
+        self.assertFalse(Product.objects.filter(pk=product_id).exists())
+        self.assertFalse(
+            Product.objects.filter(
+                name='Missing Row ProductAdmin Resurrection',
+            ).exists(),
+        )
+
+        all_sql = '\n'.join(query['sql'] for query in captured.captured_queries)
+        mutation_sql = '\n'.join(product_mutations)
+        self.assertNotIn('INSERT INTO "catalog_product"', all_sql)
+        for field in PRODUCT_ADMIN_PROTECTED_FIELDS:
+            self.assertNotIn(f'"{field}"', mutation_sql)
+
     def test_save_model_status_activation_still_sets_published_at(self):
         """update_fields must preserve Product.save() managed fields."""
         draft = Product.objects.create(

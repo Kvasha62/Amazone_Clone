@@ -277,9 +277,13 @@ class ProductAdmin(admin.ModelAdmin):
         On the change path we must also avoid Django's default full-row
         ``obj.save()``: a stale Product instance can otherwise overwrite a
         fresher ``ReviewService`` → ``CatalogService.set_review_stats()``
-        result. ProductAdmin therefore saves only concrete fields that are
-        editable through the actual ProductAdmin form plus required
-        model-managed fields, always excluding ``PRODUCT_ADMIN_PROTECTED_FIELDS``.
+        result or resurrect a deleted row with stale derived values.
+        ProductAdmin therefore saves only concrete fields that are editable
+        through the actual ProductAdmin form plus required model-managed
+        fields, always excluding ``PRODUCT_ADMIN_PROTECTED_FIELDS``. If the
+        change object has no primary key or the existing row disappeared before
+        save, the Admin change is rejected instead of falling back to
+        unrestricted persistence.
 
         Legitimate service-level paths stay outside Admin orchestration:
         ``PricingService`` → ``CatalogService.set_product_prices()`` for price
@@ -287,11 +291,22 @@ class ProductAdmin(admin.ModelAdmin):
         for review aggregates. ProductAdmin forbids the mutations instead of
         importing pricing/reviews services.
         """
-        if change and obj.pk:
+        if change:
+            if not obj.pk:
+                raise PermissionDenied(
+                    'Сохранение Product без primary key через Admin change-save '
+                    'запрещено (ARCH-001): change path не должен '
+                    'выполнять full-row insert.'
+                )
+
             previous = self._stored_product_values(obj)
             if previous is None:
-                super().save_model(request, obj, form, change)
-                return
+                raise PermissionDenied(
+                    'Сохранение устаревшего Product через Admin запрещено '
+                    '(ARCH-001): товар уже отсутствует в БД. Повторное '
+                    'создание через change-save могло бы записать stale '
+                    'aggregate fields.'
+                )
 
             changed_fields = [
                 field

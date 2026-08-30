@@ -268,9 +268,11 @@ knowledge) and writes them via `CatalogService.set_review_stats()` —
 signals are logging-only and mutate nothing. The Django Admin product
 form displays these fields as read-only; `ProductAdmin.save_model()`
 rejects changed in-memory values and, on change saves, persists only an
-explicit `update_fields` set of non-protected ProductAdmin fields
-(ARCH-001 H2). This is an Admin-surface guard, not database-level
-enforcement.
+explicit `update_fields` set of non-protected ProductAdmin fields. If
+the change object has no primary key or the target row disappeared, the
+stale Admin change is rejected instead of falling back to a full-row
+save or insert (ARCH-001 H2). This is an Admin-surface guard, not
+database-level enforcement.
 
 `min_price` / `max_price` are updated exclusively through the explicit
 cross-domain service contract (ARCH-001 Stage 2): `pricing` computes
@@ -800,7 +802,7 @@ surface; raw ORM/shell updates are still outside this guard.
 
 | Admin surface | Aggregate risk | H2 behavior |
 |---------------|----------------|-------------|
-| `ProductAdmin` | Direct form/save write of `rating` / `reviews_count`; stale full-row saves overwriting fresher service aggregates | fields are rendered read-only and omitted from the generated ModelForm; `save_model()` raises `PermissionDenied` if an in-memory product would persist changed values and uses explicit `update_fields` for change saves so protected fields are absent from Admin `UPDATE` statements |
+| `ProductAdmin` | Direct form/save write of `rating` / `reviews_count`; stale full-row saves overwriting fresher service aggregates or resurrecting a deleted Product row | fields are rendered read-only and omitted from the generated ModelForm; `save_model()` raises `PermissionDenied` if an in-memory product would persist changed values, uses explicit `update_fields` for existing-row change saves so protected fields are absent from Admin `UPDATE` statements, and rejects stale change saves when the row no longer exists |
 | `ReviewAdmin` add/change | Creating a review, changing `rating`, or changing `is_approved` changes the approved-review AVG/COUNT | add uses `ReviewService.create_review()`; rating/text/title edits use `ReviewService.update_review()`; approval changes use `ReviewService.approve_review()` / `reject_review()` |
 | `ReviewAdmin` change | Moving an existing review to another product would require recalculating both old and new products | `user` / `product` are read-only on existing reviews, and `save_model()` rejects forced changes because no existing service-level move operation is defined |
 | `ReviewAdmin` delete / bulk delete | Removing approved reviews changes AVG/COUNT | `delete_model()` / `delete_queryset()` route each row through `ReviewService.delete_review()` |
@@ -819,10 +821,13 @@ ProductAdmin does not import reviews code to recalculate aggregates; it
 rejects direct aggregate writes and avoids Django's default full-row
 `obj.save()` on existing products by updating only non-protected Admin
 form fields plus required model-managed fields (`updated_at`, and
-`slug` / `published_at` when `Product.save()` generates them). ReviewAdmin
-stays in the reviews context and delegates aggregate-affecting operations
-to the existing ReviewService entrypoints rather than writing `Product`
-fields or calling `CatalogService.set_review_stats()` itself.
+`slug` / `published_at` when `Product.save()` generates them). If a
+change-save lacks a primary key or the row no longer exists, ProductAdmin
+rejects the stale operation instead of letting Django's save fallback
+perform a full-row insert. ReviewAdmin stays in the reviews context and
+delegates aggregate-affecting operations to the existing ReviewService
+entrypoints rather than writing `Product` fields or calling
+`CatalogService.set_review_stats()` itself.
 
 This is the **primary** mechanism for cross-domain coordination.
 
