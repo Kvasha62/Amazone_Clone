@@ -702,6 +702,13 @@ OrderService.cancel()
   → PaymentService.refund_payment(payment, ...)
 ```
 
+**Cancellation entrypoint (EDU-002).** `CANCELLED` is reached only through
+`OrderService.cancel()`. `transition_status()` rejects `CANCELLED` so it
+cannot bypass coupon release, inventory, or payment refund orchestration.
+Staff `PATCH /api/v1/orders/{order_number}/status/` with
+`{"status": "cancelled"}` routes to `cancel()`; other status values still
+use `transition_status()`.
+
 Coupon coordination (`apply_coupon` / `remove_coupon` / `cancel`) follows the
 same pattern: `OrderService` owns the transaction and locks
 (`Order → Coupon → CouponUsage`), while `DiscountService` mutates only
@@ -762,10 +769,17 @@ tests (`PriceBoundsConcurrencyTests`).
 state changes (no reverse dependency, no cross-context Django signal,
 no global listener registry / event bus). Any such mechanism would
 hide the cross-domain call path that this document requires to be
-explicit. Changing `variant.is_active` directly (Django admin, raw
-ORM) leaves `min_price`/`max_price` stale until the next pricing
-operation — this is an accepted, documented trade-off of the one-way
-architecture.
+explicit.
+
+**Admin (ARCH-001 Stage 2).** Django Admin for `ProductVariant` (and
+the variant inline on `Product`) must not mutate price-relevant state
+in a way that bypasses `PricingService`. Catalog Admin therefore
+forbids changing `is_active` and deleting variants (including bulk
+delete). Calling `PricingService` from catalog Admin would introduce
+`catalog → pricing`, which is forbidden. Safe non-price fields may
+still be edited. Raw ORM / shell mutations of `is_active` remain an
+accepted trade-off of the one-way architecture and leave
+`min_price`/`max_price` stale until the next pricing operation.
 
 ### Role of Django Signals
 

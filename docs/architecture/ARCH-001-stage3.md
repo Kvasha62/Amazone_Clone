@@ -64,6 +64,17 @@ Order-status gating is owned by `OrderService` (the orders FSM owner);
 A legacy order with `discount > 0` but no `CouponUsage` is handled gracefully by
 remove; it is logged and the discount is cleared without guessing a coupon.
 
+## Cancellation entrypoint
+
+`CANCELLED` for an order (with or without a coupon) is reached only through
+`OrderService.cancel()`. `OrderService.transition_status()` does **not** accept
+`CANCELLED` and is not an alternative cancellation path — this prevents
+bypassing coupon release (and the rest of cancel orchestration).
+
+Staff `PATCH .../status/` with `{"status": "cancelled"}` must call
+`OrderService.cancel()`; other status transitions continue to use
+`transition_status()`.
+
 ## Cross-context rules
 
 `DiscountService` never mutates `orders.Order` and does not own the outer

@@ -17,12 +17,17 @@
 #   • Нет автопроверки API → сломанные endpoints не обнаружатся
 # ────────────────────────────────────────────────────────────────────────
 
+from decimal import Decimal
+
 from django.test import TestCase
 from django.urls import reverse
 
 from rest_framework.test import APIClient
 
+from apps.discounts.models import CouponUsage
+from apps.discounts.tests.factories import create_test_coupon
 from apps.orders.models.order import OrderStatus
+from apps.orders.services.order_service import OrderService
 from apps.orders.tests.factories import (
     create_test_order,
     create_test_user,
@@ -113,6 +118,72 @@ class OrderAPITests(TestCase):
         )
         response = self.client.patch(url, {'status': 'confirmed'})
         self.assertEqual(response.status_code, 403)
+
+    def test_staff_status_cancelled_releases_pending_coupon(self):
+        """EDU-002: staff PATCH status=cancelled goes through cancel().
+
+        PENDING order with an active coupon must release CouponUsage and
+        decrement times_used — the former B1 bypass path.
+        """
+        self.user.is_staff = True
+        self.user.save(update_fields=['is_staff'])
+
+        order = create_test_order(
+            self.user,
+            subtotal=Decimal('1000.00'),
+            total=Decimal('1000.00'),
+        )
+        coupon = create_test_coupon(code='STAFFCXL', discount_value=Decimal('10'))
+        OrderService.apply_coupon(order, 'STAFFCXL', user=self.user)
+        coupon.refresh_from_db()
+        self.assertEqual(coupon.times_used, 1)
+        self.assertTrue(CouponUsage.objects.filter(order=order).exists())
+
+        url = reverse(
+            'orders:order-status',
+            kwargs={'order_number': order.order_number},
+        )
+        response = self.client.patch(url, {'status': 'cancelled'}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['status'], 'cancelled')
+
+        order.refresh_from_db()
+        coupon.refresh_from_db()
+        self.assertEqual(order.status, OrderStatus.CANCELLED)
+        self.assertEqual(order.discount, Decimal('0.00'))
+        self.assertEqual(order.total, Decimal('1000.00'))
+        self.assertEqual(coupon.times_used, 0)
+        self.assertFalse(CouponUsage.objects.filter(order=order).exists())
+
+    def test_staff_status_cancelled_keeps_confirmed_coupon(self):
+        """EDU-002: staff cancel of CONFIRMED order keeps coupon consumed."""
+        self.user.is_staff = True
+        self.user.save(update_fields=['is_staff'])
+
+        order = create_test_order(
+            self.user,
+            subtotal=Decimal('1000.00'),
+            total=Decimal('1000.00'),
+        )
+        coupon = create_test_coupon(code='STAFFKEEP', discount_value=Decimal('10'))
+        OrderService.apply_coupon(order, 'STAFFKEEP', user=self.user)
+        order.status = OrderStatus.CONFIRMED
+        order.save(update_fields=['status', 'updated_at'])
+
+        url = reverse(
+            'orders:order-status',
+            kwargs={'order_number': order.order_number},
+        )
+        response = self.client.patch(url, {'status': 'cancelled'}, format='json')
+        self.assertEqual(response.status_code, 200)
+
+        order.refresh_from_db()
+        coupon.refresh_from_db()
+        self.assertEqual(order.status, OrderStatus.CANCELLED)
+        self.assertEqual(coupon.times_used, 1)
+        self.assertTrue(CouponUsage.objects.filter(order=order).exists())
+        self.assertEqual(order.discount, Decimal('100.00'))
+        self.assertEqual(order.total, Decimal('900.00'))
 
     # ── Отмена заказа ──
 

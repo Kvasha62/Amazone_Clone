@@ -310,7 +310,9 @@ class OrderStatusView(APIView):
         ПОТОК:
           1. Найти заказ по order_number
           2. Валидация body (OrderStatusTransitionSerializer)
-          3. OrderService.transition_status() — FSM
+          3. CANCELLED → OrderService.cancel() (единственная точка отмены;
+             coupon / inventory / payment coordination)
+             иначе → OrderService.transition_status() — FSM
           4. Сериализация и ответ
         """
         try:
@@ -321,11 +323,18 @@ class OrderStatusView(APIView):
         input_serializer = OrderStatusTransitionSerializer(data=request.data)
         input_serializer.is_valid(raise_exception=True)
 
-        order = OrderService.transition_status(
-            order,
-            input_serializer.validated_data['status'],
-            user=request.user,
-        )
+        new_status = input_serializer.validated_data['status']
+        # EDU-002: staff status endpoint must not bypass cancel() for
+        # CANCELLED — otherwise PENDING coupon slots leak (times_used /
+        # CouponUsage left active while order is cancelled).
+        if new_status == OrderStatus.CANCELLED:
+            order = OrderService.cancel(order, user=request.user)
+        else:
+            order = OrderService.transition_status(
+                order,
+                new_status,
+                user=request.user,
+            )
 
         # Перечитываем с prefetch.
         order = Order.objects.with_items().get(pk=order.pk)

@@ -425,7 +425,9 @@ class ShippingService:
         ПРАВИЛА:
           • IN_TRANSIT → Order.PROCESSING (заказ в обработке)
           • DELIVERED  → Order.DELIVERED (заказ доставлен)
-          • RETURNED   → Order.CANCELLED (заказ отменён)
+          • RETURNED   → Order.CANCELLED via OrderService.cancel()
+            (EDU-002: cancel is the sole cancellation entrypoint;
+            transition_status rejects CANCELLED)
 
         Оборачиваем в try/except — ошибка синхронизации статуса заказа
         не должна откатывать транзакцию отправления.
@@ -433,18 +435,37 @@ class ShippingService:
         from apps.orders.models import Order
         from apps.orders.services.order_service import OrderService
 
+        # Non-cancel transitions still go through the shared FSM helper.
         order_status_map = {
             'in_transit': OrderStatus.PROCESSING,
             'delivered': OrderStatus.DELIVERED,
-            'returned': OrderStatus.CANCELLED,
         }
-
-        target_order_status = order_status_map.get(shipment_status)
-        if not target_order_status:
-            return
 
         try:
             order = Order.objects.get(pk=shipment.order_id)
+
+            # EDU-002: RETURNED must cancel through OrderService.cancel()
+            # so coupon release / inventory / payment side-effects run.
+            # Calling transition_status(..., CANCELLED) raises ValidationError
+            # and was previously swallowed here — leaving Order.status stale.
+            if shipment_status == 'returned':
+                if order.status != OrderStatus.CANCELLED:
+                    OrderService.cancel(order)
+                    logger.info(
+                        'order_status_synced_from_shipment',
+                        extra={
+                            'order_id': order.pk,
+                            'order_number': order.order_number,
+                            'shipment_status': shipment_status,
+                            'new_order_status': OrderStatus.CANCELLED,
+                        },
+                    )
+                return
+
+            target_order_status = order_status_map.get(shipment_status)
+            if not target_order_status:
+                return
+
             if order.status != target_order_status:
                 OrderService.transition_status(
                     order, target_order_status,
