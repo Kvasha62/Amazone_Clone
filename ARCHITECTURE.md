@@ -444,8 +444,9 @@ existing orders.
 - `handle_webhook()`: idempotent webhook processing
 
 **Current implementation**: mock provider with `external_id = 'mock_<uuid>'`.
-The webhook endpoint is `AllowAny` with no HMAC verification — suitable
-for development only.
+The webhook endpoint is `AllowAny` (no JWT — the provider sends the request
+without user authentication) and requires HMAC-SHA256 verification via the
+`X-Webhook-Signature` header, using `PAYMENT_WEBHOOK_SECRET`.
 
 ### `reviews` — Product Reviews
 
@@ -1021,6 +1022,7 @@ docker compose down           # Stop
 | `DB_USER` / `DB_PASS`  | `postgres` / empty               | DB credentials           |
 | `DB_HOST` / `DB_PORT`  | `localhost` / `5432`             | DB connection            |
 | `DJANGO_SECRET_KEY`    | insecure default                 | Secret key               |
+| `PAYMENT_WEBHOOK_SECRET`| (empty)                         | Webhook HMAC secret      |
 | `DJANGO_DEBUG`         | `True`                           | Debug mode               |
 | `REDIS_URL`            | `redis://localhost:6379/0`       | Celery broker            |
 | `CORS_ALLOW_ALL_ORIGINS`| `True` (debug)                  | CORS policy              |
@@ -1033,7 +1035,7 @@ docker compose down           # Stop
 - [ ] Generate strong `DJANGO_SECRET_KEY`
 - [ ] Use PostgreSQL (not SQLite)
 - [ ] Set `CORS_ALLOW_ALL_ORIGINS=False` + whitelist origins
-- [ ] Add HMAC verification to payment webhook
+- [ ] Set `PAYMENT_WEBHOOK_SECRET` (webhook HMAC verification)
 - [ ] Use gunicorn + nginx (not runserver)
 - [ ] Enable psycopg3 connection pooling
 - [ ] Set up SMTP or django-anymail for email
@@ -1065,8 +1067,9 @@ apps/payments/
 ```
 
 Each adapter implements `create()`, `confirm()`, `cancel()`,
-`refund()`, `verify_webhook()`. The webhook endpoint would then
-verify HMAC signatures per provider.
+`refund()`, `verify_webhook()`. HMAC-SHA256 verification of the
+webhook endpoint is already implemented; this abstraction would
+specialize it per provider.
 
 ### Domain Events
 
@@ -1155,13 +1158,14 @@ write `Product` price bounds.
 ### Webhook Security
 
 **Current state**: `POST /api/v1/payments/webhook/` is `AllowAny`
-with no signature verification.
+(no JWT) and requires HMAC-SHA256 verification via the
+`X-Webhook-Signature` header. The signature is recomputed over the raw
+body with `PAYMENT_WEBHOOK_SECRET` and compared timing-safe
+(`hmac.compare_digest`). A missing or invalid signature — or a missing
+secret — is rejected with `403 Forbidden`.
 
-**Recommended direction**: Add HMAC-SHA256 verification per provider
-(YooKassa, Stripe). The webhook view should:
-1. Read the signature header
-2. Recompute HMAC over the raw body with the provider's secret
-3. Reject if mismatch (403)
+**Recommended direction**: Specialize webhook signature verification
+per provider (YooKassa, Stripe) through the `PaymentGateway` abstraction.
 
 ### Denormalization Refresh
 
