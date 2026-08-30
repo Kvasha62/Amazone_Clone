@@ -26,9 +26,18 @@
 #   показывает (readonly_fields) и ЗАПРЕЩАЕТ любую запись отличных
 #   значений (defense-in-depth в save_model).
 #
+# ARCH-001 H2 (review aggregates):
+#   Product.rating / reviews_count — денормализованные агрегаты отзывов.
+#   ProductAdmin показывает их как readonly, запрещает forced save и на
+#   change-save пишет только разрешённые ProductAdmin поля через
+#   update_fields; пересчёт остаётся за ReviewService →
+#   CatalogService.set_review_stats().
+#
 # ЧТО БУДЕТ, ЕСЛИ УДАЛИТЬ ФАЙЛ:
 #   В /admin/catalog/product/ — пусто. Товары нельзя создавать/редактировать.
 # ────────────────────────────────────────────────────────────
+
+from decimal import Decimal
 
 from django.contrib import admin
 from django.core.exceptions import PermissionDenied
@@ -45,6 +54,29 @@ from apps.catalog.models import (
 # Писать их имеет право только CatalogService.set_product_prices()
 # (вызывается из PricingService) — Admin только читает.
 PRODUCT_PRICE_BOUNDS_FIELDS = ('min_price', 'max_price')
+
+# ARCH-001 H2: review-derived aggregate fields. CatalogService.set_review_stats()
+# is the catalog-owned service-level write path; ProductAdmin may display these
+# values but must not persist arbitrary Admin-supplied values.
+PRODUCT_REVIEW_AGGREGATE_FIELDS = ('rating', 'reviews_count')
+
+PRODUCT_ADMIN_PROTECTED_FIELDS = (
+    *PRODUCT_PRICE_BOUNDS_FIELDS,
+    *PRODUCT_REVIEW_AGGREGATE_FIELDS,
+)
+PRODUCT_REVIEW_AGGREGATE_DEFAULTS = {
+    'rating': Decimal('0.00'),
+    'reviews_count': 0,
+}
+
+# Fields managed by Product.save()/BaseModel that must still be persisted when
+# ProductAdmin uses update_fields on the change path. They are intentionally
+# handled separately from Admin form inputs.
+PRODUCT_ADMIN_MODEL_MANAGED_SAVE_FIELDS = (
+    'slug',
+    'published_at',
+    'updated_at',
+)
 
 
 # ────────────────────────────────────────────────────────────
@@ -152,6 +184,10 @@ class ProductAdmin(admin.ModelAdmin):
         # Источник истины — PricingService → CatalogService.set_product_prices.
         'min_price',
         'max_price',
+        # ARCH-001 H2: review-derived aggregates — только чтение.
+        # Источник истины: ReviewService → CatalogService.set_review_stats.
+        'rating',
+        'reviews_count',
     )
 
     ordering = ('-created_at',)
@@ -196,7 +232,13 @@ class ProductAdmin(admin.ModelAdmin):
                 'max_price',
             ),
         }),
-        ('Рейтинг', {
+        ('Рейтинг / отзывы', {
+            'description': (
+                'rating и reviews_count — только чтение: рассчитываются '
+                'ReviewService по одобренным отзывам и записываются через '
+                'CatalogService.set_review_stats() (ARCH-001 H2). '
+                'views_count не относится к review-агрегатам H2.'
+            ),
             'fields': (
                 'rating',
                 'reviews_count',
@@ -220,51 +262,155 @@ class ProductAdmin(admin.ModelAdmin):
     )
 
     # ----------------------------------------------------------
-    # ARCH-001 Stage 2 (M1): защита границ цен (defense-in-depth)
+    # ARCH-001 Stage 2 / H2: защита денормализованных агрегатов
     # ----------------------------------------------------------
 
     def save_model(self, request, obj, form, change):
-        """Refuse persisting changed price bounds even if the form is forced.
+        """Refuse and avoid persisting protected fields from ProductAdmin.
 
-        ``readonly_fields`` already removes ``min_price`` / ``max_price``
-        from the generated ModelForm, so a normal Admin POST cannot reach
-        them. This override is the second layer: a crafted POST, a direct
-        ``save_model()`` call, or a future edit of ``readonly_fields``
-        still cannot write bounds that differ from the stored ones.
+        ``readonly_fields`` removes the protected fields from generated
+        ModelForms, so a normal Admin POST cannot bind them. This override is
+        the second layer: a crafted POST, a direct ``save_model()`` call, or a
+        future edit of ``readonly_fields`` still cannot persist arbitrary
+        aggregate values.
 
-        The authoritative writer stays
-        ``PricingService.recalculate_product_bounds()`` →
-        ``CatalogService.set_product_prices()``. Catalog Admin must not
-        import PricingService (no ``catalog → pricing`` dependency), so it
-        forbids the mutation instead of recalculating it.
+        On the change path we must also avoid Django's default full-row
+        ``obj.save()``: a stale Product instance can otherwise overwrite a
+        fresher ``ReviewService`` → ``CatalogService.set_review_stats()``
+        result or resurrect a deleted row with stale derived values.
+        ProductAdmin therefore saves only concrete fields that are editable
+        through the actual ProductAdmin form plus required model-managed
+        fields, always excluding ``PRODUCT_ADMIN_PROTECTED_FIELDS``. If the
+        change object has no primary key or the existing row disappeared before
+        save, the Admin change is rejected instead of falling back to
+        unrestricted persistence.
+
+        Legitimate service-level paths stay outside Admin orchestration:
+        ``PricingService`` → ``CatalogService.set_product_prices()`` for price
+        bounds and ``ReviewService`` → ``CatalogService.set_review_stats()``
+        for review aggregates. ProductAdmin forbids the mutations instead of
+        importing pricing/reviews services.
         """
-        if change and obj.pk:
-            previous = (
-                Product.objects.filter(pk=obj.pk)
-                .values_list('min_price', 'max_price')
-                .first()
+        if change:
+            if not obj.pk:
+                raise PermissionDenied(
+                    'Сохранение Product без primary key через Admin change-save '
+                    'запрещено (ARCH-001): change path не должен '
+                    'выполнять full-row insert.'
+                )
+
+            previous = self._stored_product_values(obj)
+            if previous is None:
+                raise PermissionDenied(
+                    'Сохранение устаревшего Product через Admin запрещено '
+                    '(ARCH-001): товар уже отсутствует в БД. Повторное '
+                    'создание через change-save могло бы записать stale '
+                    'aggregate fields.'
+                )
+
+            changed_fields = [
+                field
+                for field in PRODUCT_ADMIN_PROTECTED_FIELDS
+                if getattr(obj, field) != previous[field]
+            ]
+            if changed_fields:
+                raise PermissionDenied(
+                    'Изменение защищённых Product aggregate fields через '
+                    f'Admin запрещено (ARCH-001): {changed_fields}. '
+                    'Используйте соответствующие service-level пути.'
+                )
+
+            update_fields = self._admin_change_update_fields(
+                request,
+                obj,
+                form,
+                previous,
             )
-            if previous is not None:
-                previous_min, previous_max = previous
-                if (
-                    obj.min_price != previous_min
-                    or obj.max_price != previous_max
-                ):
-                    raise PermissionDenied(
-                        'Изменение Product.min_price / max_price через Admin '
-                        'запрещено (ARCH-001 Stage 2). Границы цен '
-                        'пересчитываются только PricingService → '
-                        'CatalogService.set_product_prices().'
-                    )
-        elif obj.min_price is not None or obj.max_price is not None:
-            # Add path: a new Product must start with empty bounds.
+            obj.save(update_fields=update_fields)
+            return
+
+        if (
+            obj.min_price is not None
+            or obj.max_price is not None
+            or any(
+                getattr(obj, field) != default
+                for field, default in PRODUCT_REVIEW_AGGREGATE_DEFAULTS.items()
+            )
+        ):
+            # Add path: a new Product must start with empty derived values.
             raise PermissionDenied(
-                'Задание Product.min_price / max_price через Admin запрещено '
-                '(ARCH-001 Stage 2). Границы цен пересчитываются только '
-                'PricingService → CatalogService.set_product_prices().'
+                'Задание Product aggregate fields через Admin запрещено '
+                '(ARCH-001). Денормализованные значения публикуются через '
+                'соответствующие service-level пути.'
             )
 
         super().save_model(request, obj, form, change)
+
+    def _stored_product_values(self, obj):
+        """Return current DB values for concrete Product fields."""
+        field_attnames = [
+            field.attname
+            for field in obj._meta.concrete_fields
+            if not field.primary_key
+        ]
+        return Product.objects.filter(pk=obj.pk).values(*field_attnames).first()
+
+    def _admin_change_update_fields(self, request, obj, form, previous):
+        """Build a safe ProductAdmin UPDATE field set for existing rows.
+
+        The allowlist is derived from the actual ProductAdmin form so future
+        Admin field additions keep working without adding protected derived
+        fields to the SQL UPDATE. For direct ``save_model(..., form=None)``
+        tests/calls we compare the same form-owned concrete fields against the
+        current stored values.
+        """
+        form_field_names = self._product_admin_form_field_names(
+            request,
+            obj,
+            form,
+        )
+        changed_form_fields = (
+            set(form.changed_data) if form is not None else None
+        )
+        protected_fields = set(PRODUCT_ADMIN_PROTECTED_FIELDS)
+        update_fields = set()
+
+        for field in obj._meta.concrete_fields:
+            if field.primary_key or field.name in protected_fields:
+                continue
+            if field.name not in form_field_names:
+                continue
+
+            if changed_form_fields is not None:
+                field_changed = field.name in changed_form_fields
+            else:
+                field_changed = getattr(obj, field.attname) != previous[field.attname]
+
+            if field_changed:
+                update_fields.add(field.name)
+
+        # Preserve Product.save()/BaseModel semantics while still avoiding a
+        # full-row save. ``updated_at`` must be part of update_fields for
+        # auto_now to advance. ``slug`` / ``published_at`` are generated by
+        # Product.save() only in these explicit states.
+        update_fields.add('updated_at')
+        if not obj.slug:
+            update_fields.add('slug')
+        if obj.status == ProductStatus.ACTIVE and not obj.published_at:
+            update_fields.add('published_at')
+
+        managed_fields = set(PRODUCT_ADMIN_MODEL_MANAGED_SAVE_FIELDS)
+        return tuple(
+            field
+            for field in PRODUCT_ADMIN_MODEL_MANAGED_SAVE_FIELDS
+            if field in update_fields
+        ) + tuple(sorted(update_fields - managed_fields))
+
+    def _product_admin_form_field_names(self, request, obj, form):
+        if form is not None:
+            return frozenset(form.fields)
+        form_class = self.get_form(request, obj=obj, change=True)
+        return frozenset(form_class.base_fields)
 
     # ----------------------------------------------------------
     # Custom columns

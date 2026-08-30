@@ -560,9 +560,11 @@ class CatalogService:
           • `reviews` не имеет права мутировать `catalog.Product`
             напрямую, поэтому вызывает этот публичный контракт.
 
-        Django Admin-форма товара пока остаётся отдельной поверхностью,
-        способной редактировать эти поля (residual H3); Admin hardening
-        намеренно не входит в этап C1.
+        ARCH-001 H2 дополняет service-level ownership защитой Admin-
+        поверхности: ProductAdmin показывает эти поля как read-only и
+        отклоняет forced save, а ReviewAdmin направляет aggregate-
+        affecting изменения Review через ReviewService. Это не является
+        database-level enforcement и не меняет контракт этого метода.
 
         ГРАНИЦЫ ЗНАЧЕНИЙ — зеркалят валидаторы полей catalog.Product
         (rating: Decimal(3,2), 0.00..5.00; reviews_count: >= 0):
