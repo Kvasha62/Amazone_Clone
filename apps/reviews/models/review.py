@@ -10,10 +10,14 @@
 #
 # ДЕНОРМАЛИЗАЦИЯ:
 #   Product.rating и Product.reviews_count обновляются при
-#   создании/удалении/изменении отзыва через явный service-контракт:
+#   создании/удалении/изменении/модерации отзыва через явный
+#   service-контракт:
 #   ReviewService.recalculate_product_rating()
+#     → LOCK Product (SELECT ... FOR UPDATE, до COMMIT вызывающей
+#       транзакции) → AVG/COUNT одобренных Review
 #     → CatalogService.set_review_stats()  (ARCH-001 C1:
 #   reviews считает агрегаты, catalog владеет записью своих полей;
+#   H1: лок Product перед расчётом исключает lost update;
 #   сигналы для этой мутации не используются).
 #
 # 📖 https://docs.djangoproject.com/en/stable/ref/models/fields/

@@ -182,6 +182,43 @@ class ReviewAggregateContractArchitectureTests(SimpleTestCase):
         # Прежний cross-context path (Product.update_rating) запрещён.
         self.assertNotIn('update_rating', source)
 
+    def test_recalculate_locks_product_before_aggregates(self):
+        """
+        ARCH-001 H1: перед расчётом агрегатов берётся row-level лок
+        authoritative Product (SELECT ... FOR UPDATE), удерживаемый
+        до COMMIT вызывающей транзакции. Без этого лока конкурентные
+        create/update/delete/approve/reject затирают агрегаты друг
+        друга (lost update) — см. apps/reviews/tests/test_concurrency.py.
+        Лок — ответственность reviews-оркестрации; catalog-контракт
+        свою транзакцию не открывает.
+        """
+        recalc = inspect.getsource(ReviewService.recalculate_product_rating)
+        self.assertIn(
+            'select_for_update',
+            inspect.getsource(ReviewService._locked_product),
+        )
+        # Лок вызывается ДО агрегатного запроса Review.
+        lock_pos = recalc.index('_locked_product')
+        aggregate_pos = recalc.index('.aggregate(')
+        self.assertLess(
+            lock_pos, aggregate_pos,
+            'Product row lock должен браться ДО расчёта AVG/COUNT '
+            '(иначе агрегаты считаются по незаблокированному состоянию).',
+        )
+        # Лок — на catalog.Product (authoritative row), не на Review.
+        lock_source = inspect.getsource(ReviewService._locked_product)
+        self.assertIn('from apps.catalog.models import Product', lock_source)
+
+    def test_set_review_stats_does_not_open_its_own_transaction(self):
+        """
+        H1: CatalogService.set_review_stats остаётся service-level write
+        контрактом — транзакцию owns вызывающий review-слой; вложенных
+        независимых транзакций и собственных локов в контракте нет.
+        """
+        source = inspect.getsource(CatalogService.set_review_stats)
+        self.assertNotIn('transaction.atomic', source)
+        self.assertNotIn('select_for_update', source)
+
     def test_product_update_rating_method_removed(self):
         """Старый авторитетный путь не должен возродиться вторым writer'ом."""
         self.assertFalse(
