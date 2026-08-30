@@ -7,10 +7,14 @@
 #   delete_review()    — удалить отзыв
 #   approve_review()   — модерация: одобрить
 #   reject_review()    — модерация: отклонить
-#   recalculate_product_rating() — рассчитать агрегаты отзывов и
-#                                  записать их через catalog-owned
-#                                  контракт CatalogService.set_review_stats()
-#                                  (ARCH-001 C1: reviews считает, catalog пишет)
+#   recalculate_product_rating() — под SELECT ... FOR UPDATE локом
+#                                  authoritative Product рассчитать
+#                                  агрегаты отзывов и записать их через
+#                                  catalog-owned контракт
+#                                  CatalogService.set_review_stats()
+#                                  (ARCH-001 C1: reviews считает,
+#                                   catalog пишет; H1: Product row lock
+#                                   перед расчётом — нет lost update)
 # ────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
@@ -210,6 +214,60 @@ class ReviewService:
     # ==============================================================
 
     @staticmethod
+    def _locked_product(product) -> "Product":  # noqa: F821 — ленивый импорт
+        """
+        SELECT ... FOR UPDATE по authoritative строке Product.
+
+        CONCURRENCY (ARCH-001 H1): стратегия конкурентности отзывов —
+        зеркало устоявшегося паттерна PricingService._locked_product()
+        (ARCH-001 Stage 2). Блокировка строки товара держится ДО КОНЦА
+        текущей транзакции, поэтому весь критический участок
+        «мутация Review → расчёт AVG/COUNT → запись Product»
+        сериализуется между конкурентными операциями над одним товаром.
+
+        Почему лок необходим (lost update без него, READ COMMITTED):
+          T1: INSERT Review A ──┐
+          T2: INSERT Review B ──┤ оба считают агрегаты ДО COMMIT
+          T1: COUNT(*)=1 → пишет reviews_count=1 ── COMMIT
+          T2: COUNT(*)=1 (не видит A) → пишет reviews_count=1 ── COMMIT
+          Итог: 2 Review в БД, Product.reviews_count=1 — потеряно
+          обновление. С локом Product второй поток БЛОКИРУЕТСЯ на
+          SELECT ... FOR UPDATE до COMMIT первого; его последующий
+          aggregate-SELECT (READ COMMITTED — свежий снапшот на каждый
+          statement) видит уже закоммиченные изменения конкурента,
+          поэтому последний коммитящий публикует агрегаты, посчитанные
+          по полному закоммиченному множеству Review.
+
+        Вызывается ВНУТРИ transaction.atomic() (все production-путей:
+        create/update/delete/approve/reject обёрнуты декоратором;
+        повторный захват уже удерживаемой транзакцией строки — тот же
+        лок, безопасен). Если вызывающий не открыл транзакцию, Django
+        бросает TransactionManagementError на select_for_update —
+        это сознательная защита контракта: пересчёт агрегатов без
+        транзакции не атомарен по определению.
+
+        LOCK ORDER (deadlock analysis, ARCH-001 H1):
+          Все review-paths, мутирующие агрегаты, захватывают замки в
+          одном порядке — сначала authoritative Product, затем
+          Review/ReviewHelpfulVote (мутация Review физически происходит
+          в той же транзакции до/после лока, но строки Review лочатся
+          только этой транзакцией и не пересекаются с локом Product).
+          Обратного порядка «сначала Review-замок у одной транзакции,
+          потом Product-замок у другой» в production нет:
+          vote_helpful() лочит Review/vote, но НЕ трогает Product и
+          агрегаты; никакой путь не лочит Review и затем ждёт Product,
+          удерживаемый конкурентом, который ждёт этот Review. Цикла
+          ожидания нет → deadlock между review-paths невозможен.
+        """
+        # ARCH-001(C1): ленивый импорт cross-context модели — reviews
+        # зависит от catalog только явными service-вызовами/локом
+        # authoritative-строки; catalog по-прежнему НЕ импортирует
+        # reviews (однонаправленная зависимость reviews → catalog).
+        from apps.catalog.models import Product
+
+        return Product.objects.select_for_update().get(pk=product.pk)
+
+    @staticmethod
     def recalculate_product_rating(product) -> None:
         """
         Пересчитывает агрегаты отзывов и передаёт их в catalog.
@@ -224,10 +282,23 @@ class ReviewService:
             (авторитетный service-level путь; Admin-поверхность товара
             — отдельный residual H3, вне этапа C1).
 
+        CONCURRENCY (ARCH-001 H1): ПЕРЕД расчётом агрегатов берётся
+        row-level лок authoritative Product (SELECT ... FOR UPDATE),
+        удерживаемый до COMMIT вызывающей транзакции. Лок сериализует
+        конкурентные create/update/delete/approve/reject одного товара:
+        последний коммитящий писатель всегда публикует AVG/COUNT,
+        посчитанные по полному закоммиченному множеству одобренных
+        Review — lost update невозможен. Транзакцией владеет вызывающий
+        orchestration/service layer (методы create/update/.../reject
+        обёрнуты @transaction.atomic); этот метод СВОЮ транзакцию не
+        открывает (как и CatalogService.set_review_stats — вложенные
+        независимые транзакции запрещены, ARCH-001 H1).
+
         Цепочка:
-          ReviewService.recalculate_product_rating()
-            → агрегаты AVG/COUNT из своих Review
-            → CatalogService.set_review_stats(product, ...)
+          transaction.atomic (вызывающий сервисный метод)
+            → LOCK Product (select_for_update)              [reviews]
+            → агрегаты AVG/COUNT из своих Review            [reviews]
+            → CatalogService.set_review_stats(product, ...) [контракт]
             → catalog.Product
 
         Прямая мутация product.rating/reviews_count из reviews
@@ -240,12 +311,20 @@ class ReviewService:
         from decimal import Decimal
 
         # ARCH-001(C1): ленивый импорт cross-context сервиса (стиль
-        # проекта — см. order_service/shipping_service). Цикла нет:
-        # catalog не импортирует reviews.
+        # проекта — см. order_service/shipping_service/pricing_service).
+        # Цикла нет: catalog не импортирует reviews.
         from apps.catalog.services.catalog_service import CatalogService
 
+        # ── LOCK: authoritative Product ДО расчёта агрегатов ──
+        # ARCH-001 H1: без этого лока конкурентные транзакции считают
+        # AVG/COUNT по неполному множеству Review и затирают результат
+        # друг друга (lost update). Лок держится до COMMIT вызывающего
+        # @transaction.atomic-метода; агрегаты ниже читаются уже под
+        # локом → READ COMMITTED гарантирует свежий снапшот Review.
+        locked_product = ReviewService._locked_product(product)
+
         stats = Review.objects.filter(
-            product=product,
+            product=locked_product,
             is_approved=True,
         ).aggregate(
             avg_rating=Avg('rating'),
@@ -259,9 +338,11 @@ class ReviewService:
         avg = round(Decimal(str(avg)), 2)
 
         # Запись — только через catalog-owned контракт (прямая мутация
-        # полей каталога из reviews запрещена, ARCH-001 C1).
+        # полей каталога из reviews запрещена, ARCH-001 C1). Метод
+        # свою транзакцию не открывает и строк не лочит — запись
+        # выполняется в транзакции вызывающего, под удержанным локом.
         CatalogService.set_review_stats(
-            product,
+            locked_product,
             rating=avg,
             reviews_count=total,
         )

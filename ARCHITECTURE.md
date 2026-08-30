@@ -694,6 +694,8 @@ def reserve_stock(order):
 | Payment amount tampering    | `amount != order.total` → `ValidationError`            |
 | Double webhook delivery     | Idempotent: already-SUCCEEDED → no-op                  |
 | Stock reserved > quantity   | `CheckConstraint(reserved_quantity__lte=F('quantity'))` |
+| Concurrent review create/update/delete/approve (lost aggregate update) | `select_for_update()` locks the authoritative `Product` row before AVG/COUNT recompute (ARCH-001 H1) |
+| Concurrent price/variant changes (stale price bounds) | `select_for_update()` locks the authoritative `Product` row before bounds recompute (ARCH-001 Stage 2) |
 
 ---
 
@@ -743,6 +745,49 @@ service-level writer of `Product.rating` / `Product.reviews_count`
 not used for this mutation. The Django Admin product form remains a
 separate surface that can still edit these fields; Admin hardening
 is a separate follow-up (H3), intentionally not part of C1.
+
+**Concurrency (ARCH-001 H1).** Every authoritative review-aggregate
+path — `ReviewService.create_review()`, `update_review()`,
+`delete_review()`, `approve_review()`, `reject_review()` (all wrapped
+in `@transaction.atomic`) — first acquires a row lock on the
+authoritative `Product` (`SELECT ... FOR UPDATE`, via
+`ReviewService._locked_product()`, held until COMMIT) *before*
+computing the AVG/COUNT aggregates:
+
+```
+transaction.atomic()                     # owned by the review service method
+    ↓ lock Product (select_for_update)   # ReviewService._locked_product()
+    ↓ mutate Review (create/update/delete/approve/reject)
+    ↓ calculate AVG/COUNT over approved Review rows   # reviews-owned
+    ↓ CatalogService.set_review_stats(...)            # catalog-owned write
+    ↓ commit
+```
+
+Without this lock the aggregate read-modify-write is a classic lost
+update under READ COMMITTED: two concurrent transactions both compute
+COUNT/AVG before either commits, and the second writer overwrites the
+first one's result (e.g. two reviews created, `reviews_count` ends at
+1). With the lock, concurrent operations on one `Product` serialize
+on its row; the aggregate SELECT of the waiter runs after the holder's
+COMMIT (READ COMMITTED takes a fresh snapshot per statement), so the
+last committing writer always publishes aggregates computed from the
+complete, committed set of approved reviews. The transaction is owned
+by the calling orchestration/service layer: neither
+`recalculate_product_rating()` nor `CatalogService.set_review_stats()`
+opens its own transaction (no nested independent transactions), and
+`F()` expressions are not used as a substitute for the recompute.
+
+Lock ordering is consistent and deadlock-free: aggregate paths take
+the `Product` lock and only touch `Review` rows within the same
+transaction; the `vote_helpful` path locks `Review`/`ReviewHelpfulVote`
+rows but never locks `Product` and never recomputes aggregates — so no
+path holds a `Review` lock while waiting for a `Product` lock held by
+a transaction that waits for that `Review`. Covered by cross-connection
+concurrency tests (`apps/reviews/tests/test_concurrency.py`:
+concurrent create/create, create/delete, approve/approve and
+approve/reject, update/update, a mixed all-paths stress run, plus a
+lock-blocking test and the post-run invariant
+`reviews_count == COUNT(approved)`, `rating == ROUND(AVG(approved))`).
 
 This is the **primary** mechanism for cross-domain coordination.
 
