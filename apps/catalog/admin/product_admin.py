@@ -55,10 +55,22 @@ class ProductImageInline(admin.TabularInline):
 # ────────────────────────────────────────────────────────────
 
 class ProductVariantInline(admin.TabularInline):
+    """Inline variants on Product change form.
+
+    ARCH-001 Stage 2: ``is_active`` is read-only and existing rows cannot be
+    deleted here. Price-relevant mutations go through
+    ``PricingService.set_variant_active`` / ``delete_variant`` only.
+    New variants may still be added (creation does not stale bounds by itself;
+    bounds update when prices are set via PricingService).
+    """
+
     model = ProductVariant
     extra = 0
     fields = ('sku', 'barcode', 'is_active', 'weight')
+    readonly_fields = ('is_active',)
     show_change_link = True
+    # Disables the per-row delete checkbox for existing variants.
+    can_delete = False
 
 
 # ────────────────────────────────────────────────────────────
