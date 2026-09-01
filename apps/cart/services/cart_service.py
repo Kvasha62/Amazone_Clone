@@ -47,7 +47,10 @@ from __future__ import annotations
 
 import logging
 
+from datetime import timedelta
+
 from django.db import transaction
+from django.utils import timezone
 
 from rest_framework.exceptions import NotFound, ValidationError
 
@@ -442,3 +445,86 @@ class CartService:
             },
         )
         return user_cart
+
+
+    # ==============================================================
+    # Cleanup / Admin bulk ops (PROD-002 service boundary)
+    # ==============================================================
+
+    @staticmethod
+    @transaction.atomic
+    def cleanup_expired_carts(
+        *,
+        inactive_days: int,
+        guest_stale_days: int,
+        dry_run: bool = False,
+    ) -> dict:
+        """
+        Удаляет старые неактивные корзины и деактивирует брошенные гостевые.
+
+        Returns:
+            {
+              'inactive_deleted': int,
+              'guest_deactivated': int,
+              'inactive_candidates': int,
+              'guest_candidates': int,
+              'dry_run': bool,
+            }
+        """
+        now = timezone.now()
+        inactive_cutoff = now - timedelta(days=inactive_days)
+        guest_cutoff = now - timedelta(days=guest_stale_days)
+
+        old_inactive = Cart.objects.filter(
+            is_active=False,
+            updated_at__lt=inactive_cutoff,
+        )
+        inactive_candidates = old_inactive.count()
+        inactive_deleted = 0
+        if inactive_candidates and not dry_run:
+            inactive_deleted, _details = old_inactive.delete()
+            # delete() total includes cascaded CartItem rows; report cart count
+            inactive_deleted = inactive_candidates
+
+        stale_guest = Cart.objects.filter(
+            is_active=True,
+            user__isnull=True,
+            updated_at__lt=guest_cutoff,
+        )
+        guest_candidates = stale_guest.count()
+        guest_deactivated = 0
+        if guest_candidates and not dry_run:
+            guest_deactivated = stale_guest.update(is_active=False)
+
+        logger.info(
+            'carts_cleanup',
+            extra={
+                'inactive_deleted': inactive_deleted if not dry_run else 0,
+                'guest_deactivated': guest_deactivated if not dry_run else 0,
+                'inactive_candidates': inactive_candidates,
+                'guest_candidates': guest_candidates,
+                'dry_run': dry_run,
+            },
+        )
+        return {
+            'inactive_deleted': 0 if dry_run else inactive_deleted,
+            'guest_deactivated': 0 if dry_run else guest_deactivated,
+            'inactive_candidates': inactive_candidates,
+            'guest_candidates': guest_candidates,
+            'dry_run': dry_run,
+            'inactive_cutoff': inactive_cutoff,
+            'guest_cutoff': guest_cutoff,
+        }
+
+    @staticmethod
+    def deactivate_carts(cart_ids) -> int:
+        """
+        Bulk-деактивация корзин (Admin action path).
+
+        Returns number of updated rows.
+        """
+        updated = Cart.objects.filter(pk__in=list(cart_ids), is_active=True).update(
+            is_active=False,
+        )
+        logger.info('carts_deactivated', extra={'count': updated})
+        return updated

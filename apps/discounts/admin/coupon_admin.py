@@ -12,6 +12,8 @@ class CampaignAdmin(admin.ModelAdmin):
 
 @admin.register(Coupon)
 class CouponAdmin(admin.ModelAdmin):
+    """PROD-002: times_used mutates only via DiscountService.register/release_usage."""
+
     list_display = (
         'code', 'discount_type', 'discount_value',
         'is_active', 'times_used', 'max_total_uses',
@@ -20,5 +22,6 @@ class CouponAdmin(admin.ModelAdmin):
     list_filter = ('discount_type', 'is_active')
     search_fields = ('code', 'description')
     raw_id_fields = ('campaign',)
+    readonly_fields = ('times_used', 'created_at', 'updated_at')
     list_per_page = 50
     ordering = ('-created_at',)

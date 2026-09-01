@@ -27,7 +27,11 @@ class StockMovementInline(admin.TabularInline):
 
 @admin.register(Stock)
 class StockAdmin(admin.ModelAdmin):
-    """Admin для Stock — остатки на складе."""
+    """Admin для Stock — остатки на складе.
+
+    PROD-002: quantity / reserved_quantity — only via InventoryService
+    (reserve/release/commit/restock/adjust_stock). Admin is read-mostly.
+    """
 
     list_display = (
         'variant_sku', 'quantity', 'reserved_quantity',
@@ -35,7 +39,14 @@ class StockAdmin(admin.ModelAdmin):
     )
     list_filter = ('quantity',)
     search_fields = ('variant__sku', 'variant__product__name')
-    readonly_fields = ('created_at', 'updated_at')
+    readonly_fields = (
+        'variant',
+        'quantity',
+        'reserved_quantity',
+        'low_stock_threshold',
+        'created_at',
+        'updated_at',
+    )
     ordering = ('-updated_at',)
     list_per_page = 50
     inlines = (StockMovementInline,)

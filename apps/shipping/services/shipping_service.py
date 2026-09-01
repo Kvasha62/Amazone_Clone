@@ -31,6 +31,8 @@ import logging
 from decimal import Decimal
 
 from django.db import models, transaction
+from datetime import timedelta
+
 from django.utils import timezone
 
 from rest_framework.exceptions import NotFound, ValidationError
@@ -40,6 +42,7 @@ from apps.shipping.constants import (
     MAX_SHIPPING_COST,
     SHIPMENT_IN_TRANSIT,
     SHIPMENT_PREPARING,
+    SHIPMENT_RETURNED,
     SHIPMENT_STATUS_TRANSITIONS,
     SHIPMENT_TERMINAL_STATUSES,
 )
@@ -568,3 +571,55 @@ class ShippingService:
             raise NotFound(
                 f'Отправление с трек-номером «{tracking_number}» не найдено.'
             )
+
+
+    @staticmethod
+    def return_stale_preparing(*, hours: int, dry_run: bool = False) -> dict:
+        """
+        Переводит зависшие PREPARING-отправления в RETURNED через FSM.
+
+        PROD-002: management command must not call shipment.save() directly —
+        status transitions (and Order sync) live in transition_status().
+        """
+        cutoff = timezone.now() - timedelta(hours=hours)
+        stale = list(
+            Shipment.objects.filter(
+                status=SHIPMENT_PREPARING,
+                updated_at__lt=cutoff,
+            )
+        )
+        candidates = len(stale)
+        if dry_run or candidates == 0:
+            return {
+                'candidates': candidates,
+                'updated': 0,
+                'errors': 0,
+                'dry_run': dry_run,
+                'cutoff': cutoff,
+                'shipments': stale,
+            }
+
+        updated = 0
+        errors = 0
+        for shipment in stale:
+            try:
+                ShippingService.transition_status(shipment, SHIPMENT_RETURNED)
+                updated += 1
+            except Exception as exc:  # noqa: BLE001 — log and continue batch
+                errors += 1
+                logger.error(
+                    'stale_shipment_error',
+                    extra={'shipment_id': shipment.pk, 'error': str(exc)},
+                )
+        logger.info(
+            'stale_shipments_returned',
+            extra={'updated': updated, 'errors': errors, 'hours': hours},
+        )
+        return {
+            'candidates': candidates,
+            'updated': updated,
+            'errors': errors,
+            'dry_run': False,
+            'cutoff': cutoff,
+            'shipments': stale,
+        }

@@ -14,6 +14,9 @@ class PriceAdmin(admin.ModelAdmin):
     """
     Admin для актуальных цен вариантов.
     Показывает: вариант, цена, скидка, эффективная цена, % скидки.
+
+    PROD-002: price/sale_price writes only via PricingService.set_price()
+    (which also recomputes Product min/max bounds). Admin is read-mostly.
     """
     list_display = (
         'id', 'variant', 'price', 'sale_price',
@@ -24,7 +27,14 @@ class PriceAdmin(admin.ModelAdmin):
     # Двойной select_related: variant → product — без N+1.
     list_select_related = ('variant', 'variant__product')
     search_fields = ('variant__sku', 'variant__product__name')
-    readonly_fields = ('created_at', 'updated_at')
+    readonly_fields = (
+        'variant',
+        'price',
+        'sale_price',
+        'currency',
+        'created_at',
+        'updated_at',
+    )
     # raw_id_fields — текстовое поле для variant (тысячи записей).
     raw_id_fields = ('variant',)
 

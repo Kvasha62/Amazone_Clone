@@ -40,7 +40,11 @@ class ShippingMethodAdmin(admin.ModelAdmin):
 
 @admin.register(Shipment)
 class ShipmentAdmin(admin.ModelAdmin):
-    """Админка для отправлений."""
+    """Админка для отправлений.
+
+    PROD-002: status / timestamps / cost — only via ShippingService
+    (transition_status / create_shipment / update_tracking).
+    """
 
     list_display = (
         'id', 'internal_tracking', 'tracking_number',
@@ -55,4 +59,13 @@ class ShipmentAdmin(admin.ModelAdmin):
     raw_id_fields = ('order', 'user', 'method')
     list_per_page = 50
     ordering = ('-created_at',)
-    readonly_fields = ('internal_tracking', '_tracking_seq')
+    readonly_fields = (
+        'internal_tracking',
+        '_tracking_seq',
+        'status',
+        'shipping_cost',
+        'shipped_at',
+        'delivered_at',
+        'created_at',
+        'updated_at',
+    )
