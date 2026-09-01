@@ -132,10 +132,12 @@ class OrderAdmin(admin.ModelAdmin):
     )
 
     # ── Поля только для чтения (immutable order) ──
+    # PROD-002: status transitions only via OrderService (actions below).
     readonly_fields = (
         'order_number',
         'user',
         'cart',
+        'status',
         'subtotal',
         'delivery_cost',
         'discount',

@@ -4,15 +4,12 @@
 #
 # Отправления в статусе PREPARING, которые не были переданы
 # в службу доставки дольше SHIPMENT_STALE_HOURS часов,
-# переводятся в статус RETURNED (возврат).
+# переводятся в статус RETURNED через ShippingService (PROD-002).
 #
 # ЗАПУСК:
 #   python manage.py cleanup_stale_shipments
 #   python manage.py cleanup_stale_shipments --hours=72
 #   python manage.py cleanup_stale_shipments --dry-run
-#
-# АВТОМАТИЗАЦИЯ:
-#   Cron: 0 */6 * * * cd /path && python manage.py cleanup_stale_shipments
 #
 # 📖 https://docs.djangoproject.com/en/stable/howto/custom-management-commands/
 # ────────────────────────────────────────────────────────────────────────
@@ -20,14 +17,11 @@
 import logging
 
 from django.core.management.base import BaseCommand
-from django.utils import timezone
 
-from apps.shipping.constants import SHIPMENT_PREPARING
-from apps.shipping.models import Shipment
+from apps.shipping.services.shipping_service import ShippingService
 
 logger = logging.getLogger(__name__)
 
-# По умолчанию — отправления, зависшие более 48 часов в PREPARING.
 DEFAULT_STALE_HOURS = 48
 
 
@@ -57,14 +51,12 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         hours = options['hours']
         dry_run = options['dry_run']
-        cutoff = timezone.now() - timezone.timedelta(hours=hours)
 
-        stale = Shipment.objects.filter(
-            status=SHIPMENT_PREPARING,
-            updated_at__lt=cutoff,
+        result = ShippingService.return_stale_preparing(
+            hours=hours,
+            dry_run=dry_run,
         )
-
-        count = stale.count()
+        count = result['candidates']
 
         if count == 0:
             self.stdout.write(
@@ -77,37 +69,15 @@ class Command(BaseCommand):
                 f'[DRY RUN] Будет переведено в RETURNED: {count} '
                 f'отправлений (PREPARING > {hours}ч).'
             )
-            for s in stale[:10]:
+            for s in result['shipments'][:10]:
                 self.stdout.write(f'  • {s.internal_tracking}')
             if count > 10:
                 self.stdout.write(f'  ... и ещё {count - 10}')
             self.stdout.write('[DRY RUN] Изменения НЕ применены.')
             return
 
-        updated = 0
-        for shipment in stale:
-            try:
-                shipment.status = 'returned'
-                shipment.save(update_fields=['status', 'updated_at'])
-                updated += 1
-                logger.info(
-                    'stale_shipment_returned',
-                    extra={
-                        'shipment_id': shipment.pk,
-                        'internal_tracking': shipment.internal_tracking,
-                    },
-                )
-            except Exception as exc:
-                logger.error(
-                    'stale_shipment_error',
-                    extra={
-                        'shipment_id': shipment.pk,
-                        'error': str(exc),
-                    },
-                )
-
         self.stdout.write(
             self.style.SUCCESS(
-                f'Переведено в RETURNED: {updated} зависших отправлений.'
+                f'Переведено в RETURNED: {result["updated"]} зависших отправлений.'
             )
         )

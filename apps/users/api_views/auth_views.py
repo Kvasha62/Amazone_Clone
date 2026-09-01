@@ -5,16 +5,22 @@
 #   POST /api/v1/auth/register/          — RegisterView
 #   POST /api/v1/auth/change-password/   — ChangePasswordView
 #
+# PROD-002: бизнес-мутации User идут только через UserService
+# (register / change_password). View — HTTP + валидация.
+#
 # 📖 https://www.django-rest-framework.org/api-guide/views/
 # ────────────────────────────────────────────────────────────────────────
+
+import logging
 
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import serializers
+from rest_framework.exceptions import ValidationError as DRFValidationError
 
-from apps.users.models import User
+from apps.users.services.user_service import UserService
 
 try:
     from drf_spectacular.utils import extend_schema, extend_schema_view
@@ -25,6 +31,8 @@ except ImportError:
     def extend_schema_view(**kwargs):
         def decorator(cls): return cls
         return decorator
+
+logger = logging.getLogger(__name__)
 
 
 # ================================================================
@@ -87,8 +95,6 @@ class RegisterView(APIView):
         input_ser = RegisterInputSerializer(data=request.data)
         if not input_ser.is_valid():
             # 🔴 Логируем только ошибки валидации БЕЗ password/password_confirm
-            import logging
-            logger = logging.getLogger(__name__)
             safe_errors = {
                 k: v for k, v in input_ser.errors.items()
                 if k not in ('password', 'password_confirm')
@@ -97,27 +103,17 @@ class RegisterView(APIView):
         input_ser.is_valid(raise_exception=True)
         data = input_ser.validated_data
 
-        # Проверка уникальности email
-        if User.objects.filter(email__iexact=data['email']).exists():
-            return Response(
-                {'email': 'Пользователь с таким email уже существует.'},
-                status=status.HTTP_400_BAD_REQUEST,
+        try:
+            user = UserService.register(
+                email=data['email'],
+                username=data['username'],
+                password=data['password'],
+                first_name=data.get('first_name', ''),
+                last_name=data.get('last_name', ''),
             )
-
-        # Проверка уникальности username
-        if User.objects.filter(username=data['username']).exists():
-            return Response(
-                {'username': 'Пользователь с таким именем уже существует.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        user = User.objects.create_user(
-            username=data['username'],
-            email=data['email'],
-            password=data['password'],
-            first_name=data.get('first_name', ''),
-            last_name=data.get('last_name', ''),
-        )
+        except DRFValidationError as exc:
+            # UserService raises field-keyed ValidationError → 400.
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
 
         output = RegisterOutputSerializer(user)
         return Response(output.data, status=status.HTTP_201_CREATED)
@@ -143,15 +139,13 @@ class ChangePasswordView(APIView):
         input_ser.is_valid(raise_exception=True)
         data = input_ser.validated_data
 
-        user = request.user
-
-        if not user.check_password(data['old_password']):
-            return Response(
-                {'old_password': 'Неверный текущий пароль.'},
-                status=status.HTTP_400_BAD_REQUEST,
+        try:
+            UserService.change_password(
+                request.user,
+                old_password=data['old_password'],
+                new_password=data['new_password'],
             )
-
-        user.set_password(data['new_password'])
-        user.save()
+        except DRFValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({'detail': 'Пароль успешно изменён.'})

@@ -193,10 +193,10 @@ class PasswordResetConfirmView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Устанавливаем новый пароль
+        # PROD-002: password mutation only via UserService.
         # 🔴 User наследует AbstractUser (НЕ BaseModel) — НЕТ updated_at
-        user.set_password(new_password)
-        user.save(update_fields=['password'])
+        from apps.users.services.user_service import UserService
+        UserService.reset_password(user, new_password=new_password)
 
         # 🔴 НЕ логируем token или пароль
         logger.info('Password reset confirmed for user %s', user.pk)

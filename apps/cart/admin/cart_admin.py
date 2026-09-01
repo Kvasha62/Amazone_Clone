@@ -115,11 +115,11 @@ class CartAdmin(admin.ModelAdmin):
     @admin.action(description='Деактивировать выбранные корзины')
     def deactivate_selected(self, request, queryset):
         """
-        Массовая деактивация корзин.
-        .update(is_active=False) — один SQL:
-        UPDATE cart_cart SET is_active = False WHERE id IN (...)
+        Массовая деактивация корзин через CartService (PROD-002).
         """
-        updated = queryset.update(is_active=False)
+        from apps.cart.services.cart_service import CartService
+
+        updated = CartService.deactivate_carts(queryset.values_list('pk', flat=True))
         self.message_user(request, f'Деактивировано {updated} корзин.')
 
 

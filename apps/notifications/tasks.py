@@ -7,6 +7,9 @@
 #   - Промокод / скидка
 #   - Ответ на отзыв
 #   - Брошенная корзина
+#
+# PROD-002: ORM-мутации Notification выполняются только через
+# NotificationService (create / mark_sent). Tasks — entrypoint, не writer.
 # ────────────────────────────────────────────────────────────────────────
 
 import logging
@@ -28,10 +31,10 @@ def send_email_notification(notification_id: int):
       2. Проверить канал == 'email'
       3. Рендерить шаблон письма
       4. Отправить через django.core.mail
-      5. Обновить status → 'sent', sent_at → now()
+      5. Обновить status → 'sent' via NotificationService.mark_sent()
     """
     from apps.notifications.models import Notification
-    from django.utils import timezone
+    from apps.notifications.services.notification_service import NotificationService
 
     try:
         notif = Notification.objects.select_related('user').get(pk=notification_id)
@@ -51,19 +54,21 @@ def send_email_notification(notification_id: int):
             notif.user.email, notif.title, notif.body[:50],
         )
 
-    notif.status = 'sent'
-    notif.sent_at = timezone.now()
-    notif.save(update_fields=['status', 'sent_at', 'updated_at'])
+    NotificationService.mark_sent(notif)
 
 
 @shared_task(name='apps.notifications.tasks.send_order_confirmation')
 def send_order_confirmation(order_id: int):
     """
     Отправка email-подтверждения заказа.
-    Создаёт Notification + вызывает send_email_notification.
+    Создаёт Notification через NotificationService + send_email_notification.
     """
     from apps.orders.models import Order
-    from apps.notifications.models import Notification
+    from apps.notifications.constants import (
+        CHANNEL_EMAIL,
+        NOTIF_ORDER_CONFIRMED,
+    )
+    from apps.notifications.services.notification_service import NotificationService
 
     try:
         order = Order.objects.select_related('user').get(pk=order_id)
@@ -71,17 +76,19 @@ def send_order_confirmation(order_id: int):
         logger.warning('Order %s не найден', order_id)
         return
 
-    notif = Notification.objects.create(
+    notif = NotificationService.create(
         user=order.user,
-        notification_type='order_confirmed',
-        channel='email',
+        notification_type=NOTIF_ORDER_CONFIRMED,
+        channel=CHANNEL_EMAIL,
         title=f'Заказ {order.order_number} подтверждён',
-        body=f'Ваш заказ {order.order_number} на сумму {order.total} ₽ подтверждён и передан в обработку.',
-        status='pending',
+        body=(
+            f'Ваш заказ {order.order_number} на сумму {order.total} ₽ '
+            f'подтверждён и передан в обработку.'
+        ),
         related_object_type='order',
         related_object_id=order.pk,
+        send_immediately=False,
     )
-
     send_email_notification.delay(notif.pk)
 
 
@@ -89,22 +96,23 @@ def send_order_confirmation(order_id: int):
 def send_order_shipped(order_id: int):
     """Отправка email о отправке заказа."""
     from apps.orders.models import Order
-    from apps.notifications.models import Notification
+    from apps.notifications.constants import CHANNEL_EMAIL, NOTIF_ORDER_SHIPPED
+    from apps.notifications.services.notification_service import NotificationService
 
     try:
         order = Order.objects.select_related('user').get(pk=order_id)
     except Order.DoesNotExist:
         return
 
-    notif = Notification.objects.create(
+    notif = NotificationService.create(
         user=order.user,
-        notification_type='order_shipped',
-        channel='email',
+        notification_type=NOTIF_ORDER_SHIPPED,
+        channel=CHANNEL_EMAIL,
         title=f'Заказ {order.order_number} отправлен',
         body=f'Ваш заказ {order.order_number} передан в службу доставки.',
-        status='pending',
         related_object_type='order',
         related_object_id=order.pk,
+        send_immediately=False,
     )
 
     send_email_notification.delay(notif.pk)

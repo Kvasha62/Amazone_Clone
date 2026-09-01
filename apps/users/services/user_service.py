@@ -264,6 +264,25 @@ class UserService:
         )
 
     @staticmethod
+    @transaction.atomic
+    def reset_password(user: User, *, new_password: str) -> None:
+        """
+        Устанавливает новый пароль без проверки старого.
+
+        Используется password-reset confirm flow (токен уже проверен
+        на entrypoint-уровне). Auth change-password идёт через
+        change_password() с проверкой old_password.
+        """
+        user.set_password(new_password)
+        # AbstractUser — нет updated_at.
+        user.save(update_fields=['password'])
+
+        logger.info(
+            'user_password_reset',
+            extra={'user_id': user.pk},
+        )
+
+    @staticmethod
     def get_profile(user: User) -> UserProfile:
         """
         Возвращает профиль пользователя или 404.

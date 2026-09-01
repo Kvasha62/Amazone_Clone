@@ -20,6 +20,7 @@ from django.utils import timezone
 
 from apps.notifications.constants import (
     CHANNEL_IN_APP,
+    STATUS_FAILED,
     STATUS_PENDING,
     STATUS_READ,
     STATUS_SENT,
@@ -102,6 +103,36 @@ class NotificationService:
         notif.status = STATUS_SENT
         notif.sent_at = timezone.now()
         notif.save(update_fields=['status', 'sent_at', 'updated_at'])
+
+    @staticmethod
+    @transaction.atomic
+    def mark_sent(notification: Notification) -> Notification:
+        """
+        Помечает уведомление как отправленное (Celery/email delivery path).
+
+        PROD-002: tasks must not mutate Notification rows directly.
+        """
+        notif = Notification.objects.select_for_update().get(pk=notification.pk)
+        notif.status = STATUS_SENT
+        notif.sent_at = timezone.now()
+        notif.save(update_fields=['status', 'sent_at', 'updated_at'])
+        return notif
+
+    @staticmethod
+    @transaction.atomic
+    def mark_failed(notification: Notification, *, note: str = '') -> Notification:
+        """Помечает уведомление как failed (delivery error)."""
+        notif = Notification.objects.select_for_update().get(pk=notification.pk)
+        notif.status = STATUS_FAILED
+        fields = ['status', 'updated_at']
+        # body/note fields are optional — keep status-only when note unused
+        notif.save(update_fields=fields)
+        if note:
+            logger.warning(
+                'notification_delivery_failed',
+                extra={'notif_id': notif.pk, 'note': note},
+            )
+        return notif
 
     @staticmethod
     @transaction.atomic
