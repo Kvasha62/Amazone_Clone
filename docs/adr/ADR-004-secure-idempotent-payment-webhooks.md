@@ -1,4 +1,4 @@
-# ADR-005 — Authenticate and Idempotently Process Payment Webhooks
+# ADR-004 — Authenticate and Idempotently Process Payment Webhooks
 
 ## Status
 

@@ -8,9 +8,8 @@ new design or change application behavior.
 
 - [ADR-001 — Pricing-to-Catalog Dependency Direction](ADR-001-pricing-to-catalog-dependency.md)
 - [ADR-002 — Reject Cross-Domain ProductVariant Signals](ADR-002-reject-cross-domain-product-variant-signals.md)
-- [ADR-003 — Serialize Product Price-Bound Recalculation](ADR-003-serialize-price-bound-recalculation.md)
-- [ADR-004 — Serialize Review Aggregate Recalculation](ADR-004-serialize-review-aggregate-recalculation.md)
-- [ADR-005 — Authenticate and Idempotently Process Payment Webhooks](ADR-005-secure-idempotent-payment-webhooks.md)
+- [ADR-003 — Pricing and Review Concurrency Consistency](ADR-003-pricing-and-review-concurrency-consistency.md)
+- [ADR-004 — Authenticate and Idempotently Process Payment Webhooks](ADR-004-secure-idempotent-payment-webhooks.md)
 
 ## Naming
 
